@@ -112,55 +112,70 @@ public sealed class ForwardingTests
         }
     }
 
-    [Fact]
-    public async Task CredentialPolicyIsPerDestinationAndRedirectIsNotFollowed()
+    [Theory]
+    [InlineData("default", "/primary/resource?simulate=remove&business=keep")]
+    [InlineData("alternate", "/alternate/resource?business=keep")]
+    public async Task AllEndToEndHeadersReachSelectedUpstreamWithoutConfiguration(string scenario, string expectedTarget)
     {
         await using var upstream = await Upstream.StartAsync();
         var json = JsonNode.Parse("""
-            {"schemaVersion":1,"destinations":{"restricted":{"baseUrl":"http://127.0.0.1/"},
-              "permitted":{"baseUrl":"http://127.0.0.1/","forwardCredentials":["Authorization","Cookie","X-Private-Token"],"removeHeaders":["X-Test-Scenario"],"removeQuery":["simulate"]}},
-              "services":{"a":{"default":{"mode":"proxy","destination":"restricted"}},
-                          "b":{"default":{"mode":"proxy","destination":"permitted"}}}}
+            {"schemaVersion":1,"destinations":{"primary":{"baseUrl":"http://127.0.0.1/"},
+              "alternate":{"baseUrl":"http://127.0.0.1/","removeQuery":["simulate"]}},
+              "services":{"a":{"default":{"mode":"proxy","destination":"primary"},"rules":[
+                {"id":"alternate","priority":1,"conditions":{"source":"header","key":"X-Test-Scenario","operator":"equals","value":"alternate"},
+                 "action":{"mode":"proxy","destination":"alternate"}},
+                {"id":"mock","priority":1,"conditions":{"source":"header","key":"X-Test-Scenario","operator":"equals","value":"mock"},
+                 "action":{"mode":"mock","response":{"statusCode":200}}}]}}}
             """)!;
-        json["destinations"]!["restricted"]!["baseUrl"] = upstream.BaseUrl + "restricted/";
-        json["destinations"]!["permitted"]!["baseUrl"] = upstream.BaseUrl + "permitted/";
-        await using var gateway = await StartGatewayAsync(json, upstream,
-            configure: o => o.CredentialHeaderNames = ["X-Private-Token"]);
+        json["destinations"]!["primary"]!["baseUrl"] = upstream.BaseUrl + "primary/";
+        json["destinations"]!["alternate"]!["baseUrl"] = upstream.BaseUrl + "alternate/";
+        await using var gateway = await StartGatewayAsync(json, upstream);
         using var client = gateway.GetTestClient();
         var ct = TestContext.Current.CancellationToken;
+        using var request = CreateRequest("GET", "/mock-proxy/a/resource?simulate=remove&business=keep", null, scenario);
+        var expected = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Authorization"] = "Bearer synthetic-token",
+            ["Cookie"] = "synthetic=cookie",
+            ["X-Api-Key"] = "synthetic-key",
+            ["Api-Key"] = "synthetic-other-key",
+            ["X-Auth-Token"] = "synthetic-auth",
+            ["X-Private-Token"] = "synthetic-private",
+            ["X-Business-Reference"] = "synthetic-reference",
+            ["X-Forwarded-For"] = "192.0.2.1",
+            ["X-Forwarded-Host"] = "client.example.test",
+            ["X-Forwarded-Proto"] = "https",
+            ["X-Forwarded-Prefix"] = "/original",
+            ["Forwarded"] = "for=192.0.2.1;proto=https"
+        };
+        foreach (var header in expected)
+            Assert.True(request.Headers.TryAddWithoutValidation(header.Key, header.Value));
+        Assert.True(request.Headers.TryAddWithoutValidation("X-Multiple", new[] { "first", "second" }));
+        Assert.True(request.Headers.TryAddWithoutValidation("Connection", "keep-alive"));
+        Assert.True(request.Headers.TryAddWithoutValidation("Proxy-Authorization", "Basic c3ludGhldGlj"));
+        request.Headers.Host = "untrusted.example.test";
 
-        using var restricted = CreateRequest("GET", "/mock-proxy/a/resource?simulate=keep", null, "keep");
-        restricted.Headers.TryAddWithoutValidation("Authorization", "Bearer synthetic-token");
-        restricted.Headers.TryAddWithoutValidation("Cookie", "synthetic=cookie");
-        restricted.Headers.TryAddWithoutValidation("X-Private-Token", "synthetic-private");
-        restricted.Headers.TryAddWithoutValidation("X-Forwarded-For", "192.0.2.1");
-        restricted.Headers.Host = "untrusted.example.test";
-        using var restrictedResponse = await client.SendAsync(restricted, ct);
-        Assert.Equal(HttpStatusCode.Created, restrictedResponse.StatusCode);
-        Assert.Equal("", upstream.Requests.Last().Authorization);
-        Assert.Equal("", upstream.Requests.Last().Cookie);
-        Assert.Equal("keep", upstream.Requests.Last().Scenario);
-        Assert.Equal("", upstream.Requests.Last().PrivateToken);
-        Assert.Equal("", upstream.Requests.Last().ForwardedFor);
-        Assert.Equal(new Uri(upstream.BaseUrl).Authority, upstream.Requests.Last().Host);
+        using var response = await client.SendAsync(request, ct);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var actual = Assert.Single(upstream.Requests);
+        Assert.Equal(expectedTarget, actual.Target);
+        foreach (var header in expected)
+            Assert.Equal(header.Value, actual.Headers[header.Key]);
+        Assert.Equal(scenario, actual.Scenario);
+        Assert.Equal(new[] { "first", "second" }, actual.MultipleValues);
+        Assert.False(actual.Headers.ContainsKey("Proxy-Authorization"));
+        Assert.False(actual.Headers.ContainsKey("Connection"));
+        Assert.Equal(new Uri(upstream.BaseUrl).Authority, actual.Host);
 
-        using var permitted = CreateRequest("GET", "/mock-proxy/b/resource?simulate=remove&business=keep", null, "remove");
-        permitted.Headers.TryAddWithoutValidation("Authorization", "Bearer synthetic-token");
-        permitted.Headers.TryAddWithoutValidation("Cookie", "synthetic=cookie");
-        permitted.Headers.TryAddWithoutValidation("X-Private-Token", "synthetic-private");
-        using var permittedResponse = await client.SendAsync(permitted, ct);
-        Assert.Equal(HttpStatusCode.Created, permittedResponse.StatusCode);
-        var actual = upstream.Requests.Last();
-        Assert.Equal("Bearer synthetic-token", actual.Authorization);
-        Assert.Equal("synthetic=cookie", actual.Cookie);
-        Assert.Equal("synthetic-private", actual.PrivateToken);
-        Assert.Equal("", actual.Scenario);
-        Assert.Equal("/permitted/resource?business=keep", actual.Target);
+        using var mock = CreateRequest("GET", "/mock-proxy/a/resource", null, "mock");
+        Assert.True(mock.Headers.TryAddWithoutValidation("Authorization", "Bearer synthetic-token"));
+        using var mockResponse = await client.SendAsync(mock, ct);
+        Assert.Equal(HttpStatusCode.OK, mockResponse.StatusCode);
+        Assert.Single(upstream.Requests);
 
-        var count = upstream.Requests.Count;
         using var redirect = await client.GetAsync("/mock-proxy/a/redirect", ct);
         Assert.Equal(HttpStatusCode.Redirect, redirect.StatusCode);
-        Assert.Equal(count + 1, upstream.Requests.Count);
+        Assert.Equal(2, upstream.Requests.Count);
     }
 
     [Fact]
@@ -872,7 +887,7 @@ public sealed class ForwardingTests
     }
 
     private sealed record Captured(string Method, string Target, string Body, string Authorization, string Cookie, string Scenario,
-        string PrivateToken, string ForwardedFor, string Host);
+        string PrivateToken, string ForwardedFor, string Host, IReadOnlyDictionary<string, string> Headers, string[] MultipleValues);
 
     private sealed class Upstream(WebApplication app, ConcurrentQueue<Captured> requests) : IAsyncDisposable
     {
@@ -898,7 +913,9 @@ public sealed class ForwardingTests
                     body, context.Request.Headers.Authorization.ToString(), context.Request.Headers.Cookie.ToString(),
                     context.Request.Headers["X-Test-Scenario"].ToString(),
                     context.Request.Headers["X-Private-Token"].ToString(), context.Request.Headers["X-Forwarded-For"].ToString(),
-                    context.Request.Host.Value ?? ""));
+                    context.Request.Host.Value ?? "",
+                    context.Request.Headers.ToDictionary(x => x.Key, x => x.Value.ToString(), StringComparer.OrdinalIgnoreCase),
+                    context.Request.Headers.GetCommaSeparatedValues("X-Multiple")));
                 if (context.Request.Path.Value!.EndsWith("/redirect", StringComparison.Ordinal))
                 {
                     context.Response.StatusCode = 302;
