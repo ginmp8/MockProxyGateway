@@ -1,0 +1,34 @@
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
+using MockProxyGateway;
+using MockProxyGateway.Configuration;
+using MockProxyGateway.Middleware;
+
+namespace Microsoft.AspNetCore.Builder;
+
+/// <summary>Explicit activation of the incoming HTTP gateway.</summary>
+public static class MockProxyGatewayApplicationBuilderExtensions
+{
+    /// <summary>Install the gateway with the configured prefix or an explicit override.</summary>
+    public static IApplicationBuilder UseMockProxyGateway(this IApplicationBuilder app, string? prefix = null)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        var options = app.ApplicationServices.GetRequiredService<IOptions<GatewayOptions>>().Value;
+        if (!options.Enabled)
+            return app;
+        var env = app.ApplicationServices.GetRequiredService<IHostEnvironment>();
+        if (env.IsProduction() ||
+            !(options.AllowedEnvironments ?? ["Development"]).Contains(env.EnvironmentName, StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Gateway activation is not permitted in this environment.");
+        var path = prefix ?? options.Prefix;
+        if (!GatewayPaths.IsSafe(path) || path == "/" || path.EndsWith('/') || path.Contains('%'))
+            throw new InvalidOperationException("Invalid gateway prefix.");
+        if (options.MaxBodySizeBytes is < 1 or > 16_777_216 ||
+            options.MaxConcurrentRequests is < 1 or > 1024 || options.ProxyTimeoutSeconds is < 1 or > 300)
+            throw new InvalidOperationException("Invalid gateway resource limits.");
+        var runtime = app.ApplicationServices.GetRequiredService<GatewayRuntime>();
+        return app.Use(next => context => runtime.InvokeAsync(context, next, new PathString(path)));
+    }
+}

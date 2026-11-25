@@ -1,0 +1,54 @@
+name: CI
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: SDK information
+        run: dotnet --info
+      - name: Restore (initial lockfile bootstrap)
+        shell: bash
+        run: |
+          if ! git ls-files --error-unmatch src/MockProxyGateway.Core/packages.lock.json src/MockProxyGateway.Host/packages.lock.json tests/MockProxyGateway.Tests/packages.lock.json >/dev/null 2>&1; then
+            dotnet restore MockProxyGateway.sln --use-lock-file
+            for f in $(find src tests -name packages.lock.json | sort); do
+              echo "::group::$f"
+              cat "$f"
+              echo "::endgroup::"
+            done
+          fi
+          dotnet restore MockProxyGateway.sln --locked-mode
+      - name: Release build
+        run: dotnet build MockProxyGateway.sln -c Release --no-restore
+      - name: Test
+        run: dotnet test MockProxyGateway.sln -c Release --no-build --no-restore --logger trx --results-directory artifacts/test-results
+      - name: Require discovered tests
+        run: |
+          python3 - <<'PY'
+          import glob
+          import xml.etree.ElementTree as ET
+          counts = [int(node.attrib["total"]) for file in glob.glob("artifacts/test-results/*.trx")
+                    for node in ET.parse(file).getroot().iter() if node.tag.endswith("Counters")]
+          assert counts and sum(counts) > 0, "No tests discovered"
+          PY
+      - name: Audit direct and transitive packages
+        run: dotnet package list --vulnerable --include-transitive
+      - name: Pack Core
+        run: dotnet pack src/MockProxyGateway.Core/MockProxyGateway.Core.csproj -c Release --no-build --no-restore -o artifacts/packages
+      - name: Require committed lockfiles
+        run: |
+          git ls-files --error-unmatch src/MockProxyGateway.Core/packages.lock.json src/MockProxyGateway.Host/packages.lock.json tests/MockProxyGateway.Tests/packages.lock.json
+          test -z "$(git status --porcelain --untracked-files=all -- '**/packages.lock.json')"
