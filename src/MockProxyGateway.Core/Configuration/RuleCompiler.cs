@@ -180,6 +180,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
         var pathMultiplier = 1;
         var hasFilter = false;
         var hasRepeatedTraversal = false;
+        var hasCubicTraversal = false;
         if (source == "body")
         {
             // Parse RFC 9535 syntax with the pinned library, not a second approximate grammar.
@@ -216,11 +217,15 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             hasRepeatedTraversal = recursiveCount == 2;
             if (hasFilter)
             {
-                // Multiple descents combined with a filter need a separate
-                // higher-order traversal bound; do not admit that combination.
-                if (recursiveCount == 2)
-                    throw Invalid("Repeated JSONPath descent cannot be combined with filters.");
-                var normalized = BoundedJsonPathFilter.Normalize(key, out var predicateRepeatedTraversal, out var predicateUnionProduct, out var hasNestedFilter);
+                var normalized = BoundedJsonPathFilter.Normalize(key, out var predicateRepeatedTraversal,
+                    out var predicateUnionProduct, out var hasNestedFilter, out var hasRepeatedPredicateDescent);
+                // Two outer descents can repeat filter candidates; two
+                // predicate descents can repeat traversal per candidate.
+                // Either requires a cubic whole-input bound. Combining both
+                // would require a fourth-order bound, so reject that shape.
+                if (recursiveCount == 2 && hasRepeatedPredicateDescent)
+                    throw Invalid("Repeated outer and predicate JSONPath descents cannot be combined.");
+                hasCubicTraversal = recursiveCount == 2 || hasRepeatedPredicateDescent;
                 // Descent may make filter candidate subtrees overlap. Charge worst-case
                 // repeated traversal even for a relative predicate in that case.
                 // Nested filters currently admit only relative, non-recursive
@@ -245,7 +250,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 pathMultiplier *= 2 + recursiveSuffix;
         }
         return new Condition("leaf", [], source, key, op, hasValue ? operand.Clone() : default,
-            quantifier, ignoreCase, regex, jsonPath, hasValue ? 1 + operand.GetRawText().Length / 64 : 0, pathMultiplier, hasFilter, hasRepeatedTraversal);
+            quantifier, ignoreCase, regex, jsonPath, hasValue ? 1 + operand.GetRawText().Length / 64 : 0, pathMultiplier, hasFilter, hasRepeatedTraversal, hasCubicTraversal);
     }
 
     internal static decimal Number(JsonElement value)

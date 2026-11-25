@@ -112,7 +112,7 @@ are independent of quantifiers. JSONPath supports bounded RFC 9535 selectors:
 `$[0:6:2]`, `$[0,2]` and `$..name`. At most 256 characters and 16 segments;
 the product of selector counts across outer segments and any predicate query
 cannot exceed four. A maximum
-of two outer recursive descents is allowed when no filter is present. Up to two
+of two outer recursive descents is allowed. Up to two
 outer filters (not in selector unions) are supported, for example `$.items[?@.active == true].value` or
 `$.items[?(@.price >= 10 && @.available) || @.override == true]`.
 Filters accept relative and root paths, scalar literals, the six comparison
@@ -125,13 +125,16 @@ subtree; unions preserve duplicates and are charged for cumulative multiplicity.
 Root queries receive the separate repeated-root work charge even inside functions.
 Negated terms are explicitly grouped before library evaluation to preserve NOT
 precedence. One outer recursive descent may precede, follow or contain an
-outer filter. Two outer descents cannot be combined with filters. A predicate query may contain one descent, such as
-`@..tag` or `count(@..tag)`; such queries are non-singular. One nested relative filter inside the outer
+outer filter; two outer descents with a filter incur the cubic precharge. A predicate
+query may contain up to two descents, such as
+`@..tag`, `count(@..tag)` or `count(@..nested..tag)`; such queries are non-singular.
+Two predicate descents incur the cubic precharge; two outer and two predicate
+descents cannot be combined. One nested relative filter inside the outer
 predicate is admitted (e.g. `$.items[?@.nested[?@.active == true]]`), including
 `count()` and `value()` over the nested results. Expressions containing a nested
 filter cannot contain another outer filter, root references inside predicates,
 unions or recursive descent;
-additional nested levels, other functions and repeated descent inside predicates
+additional nested levels, other functions and a third descent inside any query
 remain rejected. The locked JsonPath.Net version is 2.2.0 (MIT). `length()` is not admitted
 until RFC-correct Unicode scalar counting and bounded evaluation are verified
 against the actual locked dependency.
@@ -141,8 +144,12 @@ descendant traversal and every subsequent segment. Filters conservatively
 charge for predicate length, body nodes and body bytes before evaluation;
 root references, nested filters, two outer descents and any descent combined with
 filters additionally charge a
-worst-case whole-input traversal and comparison for every possible candidate;
-they also validate all numeric values in the inspected body once before the
+worst-case whole-input traversal and comparison for every possible candidate.
+When two outer descents are combined with a filter or two descents occur inside
+a predicate query, an additional body-node factor bounds repeated candidates or
+repeated predicate traversals. This conservative cubic charge can reject otherwise
+valid complex selectors on moderately sized inputs before library evaluation.
+Filters also validate all numeric values in the inspected body once before the
 first filter, rejecting values that cannot be represented exactly as decimals.
 Numeric range comparisons reject unsupported decimal precision rather than rounding. Condition depth is at most 12; rule count 4096; condition nodes
 16384; body nodes 16384; weighted evaluation budget 65536; at most 64 regex

@@ -131,7 +131,12 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                 // Repeated descent, root queries and filters can revisit
                 // overlapping subtrees. Bound the worst case before evaluation:
                 // every candidate traverses the entire input.
-                if (condition.HasJsonPathRepeatedTraversal)
+                // At most 16,384 nodes and 16 MiB of input are admitted.
+                // The bounded union, path length and segment multipliers keep
+                // this conservative cubic product within Int64 range.
+                if (condition.HasJsonPathCubicTraversal)
+                    Charge((long)_bodyNodes * _bodyNodes * (_bodyNodes + _bodyByteLength / 64L + 1) * condition.JsonPathWorkMultiplier);
+                else if (condition.HasJsonPathRepeatedTraversal)
                     Charge((long)_bodyNodes * (_bodyNodes + _bodyByteLength / 64L + 1) * condition.JsonPathWorkMultiplier);
                 if (condition.HasJsonPathFilter)
                 {
