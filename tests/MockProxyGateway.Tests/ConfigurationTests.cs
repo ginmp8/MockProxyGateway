@@ -146,7 +146,7 @@ public sealed class ConfigurationTests
     [Fact]
     public async Task NamedPolicyIsOptionalAndDeniedBeforeRuleEvaluation()
     {
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        var builder = TestHosting.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Services.AddAuthorization(options =>
             options.AddPolicy("gateway-deny", policy => policy.RequireAssertion(_ => false)));
@@ -170,7 +170,7 @@ public sealed class ConfigurationTests
     [Fact]
     public async Task RegistrationWithoutMiddlewareIsInertEvenInProduction()
     {
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Production" });
+        var builder = TestHosting.CreateBuilder("Production");
         builder.WebHost.UseTestServer();
         builder.Services.AddMockProxyGateway(o => o.ProgrammaticRules = () => throw new InvalidOperationException("must-not-read"));
         await using var app = builder.Build();
@@ -305,7 +305,7 @@ public sealed class ConfigurationTests
         const string original = """
             {"schemaVersion":1,"destinations":{},"services":{"demo":{"default":{"mode":"mock","response":{"statusCode":200,"text":"original"}}}}}
             """;
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        var builder = TestHosting.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Configuration["MockProxyGateway:RulesJson"] = original;
         builder.Services.AddMockProxyGateway(o =>
@@ -331,7 +331,7 @@ public sealed class ConfigurationTests
         var current = """
             {"schemaVersion":1,"destinations":{},"services":{"demo":{"default":{"mode":"mock","response":{"statusCode":200,"text":"old"}}}}}
             """;
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        var builder = TestHosting.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Services.AddAuthorization(o => o.AddPolicy("gate", p => p.RequireAssertion(async context =>
         {
@@ -383,7 +383,7 @@ public sealed class ConfigurationTests
     [Fact]
     public async Task MissingConfiguredPolicyDeniesGatewayWithoutAffectingHostRoutes()
     {
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        var builder = TestHosting.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Services.AddMockProxyGateway(o =>
         {
@@ -435,7 +435,7 @@ public sealed class ConfigurationTests
     [InlineData("Inline")]
     public async Task ConflictingConfiguredRuleSourcesAreRejected(string source)
     {
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        var builder = TestHosting.CreateBuilder();
         builder.Configuration["MockProxyGateway:RulesJson"] = Rules;
         builder.Configuration["MockProxyGateway:Rules:schemaVersion"] = "1";
         builder.Services.AddMockProxyGateway(o => o.RuleSource = source);
@@ -455,7 +455,7 @@ public sealed class ConfigurationTests
                "conditions":{"source":"header","key":"X-Scenario","operator":"exists"},
                "action":{"mode":"mock","response":{"statusCode":201,"text":"temporary"}}}]}}}
             """;
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        var builder = TestHosting.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Services.AddSingleton<TimeProvider>(clock);
         builder.Services.AddMockProxyGateway(o =>
@@ -495,7 +495,7 @@ public sealed class ConfigurationTests
               "action":{"mode":"mock","response":{"statusCode":201,"text":"new"}}}]
             """);
         var changed = candidate.ToJsonString();
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        var builder = TestHosting.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Services.AddMockProxyGateway(o => o.ProgrammaticRules = () => JsonElement.Parse(Volatile.Read(ref current)));
         await using var app = builder.Build();
@@ -552,7 +552,7 @@ public sealed class ConfigurationTests
     public async Task ConcurrencyLimitFailsClosedAndReleasesAfterCancellation()
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        var builder = TestHosting.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Services.AddAuthorization(o => o.AddPolicy("gate", p => p.RequireAssertion(async context =>
         {

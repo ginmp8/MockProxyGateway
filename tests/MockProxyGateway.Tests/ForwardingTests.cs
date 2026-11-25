@@ -480,7 +480,7 @@ public sealed class ForwardingTests
              "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
             """)!;
         rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        var builder = TestHosting.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Services.AddAuthentication("synthetic").AddScheme<AuthenticationSchemeOptions, SyntheticAuthenticationHandler>(
             "synthetic", _ => { });
@@ -792,7 +792,7 @@ public sealed class ForwardingTests
     private static async Task<WebApplication> StartGatewayAsync(JsonNode json, Upstream upstream, bool realServer = false,
         Func<System.Text.Json.JsonElement>? provider = null, ILoggerProvider? capture = null, Action<GatewayOptions>? configure = null)
     {
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        var builder = TestHosting.CreateBuilder();
         if (capture is not null)
         {
             builder.Logging.AddProvider(capture);
@@ -836,7 +836,7 @@ public sealed class ForwardingTests
         internal static async Task<Upstream> StartAsync(Func<HttpContext, Task>? handler = null)
         {
             var requests = new ConcurrentQueue<Captured>();
-            var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+            var builder = TestHosting.CreateBuilder();
             builder.WebHost.UseUrls("http://127.0.0.1:0");
             var app = builder.Build();
             app.Run(async context =>
