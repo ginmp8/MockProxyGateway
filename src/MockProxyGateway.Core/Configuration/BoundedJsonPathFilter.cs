@@ -88,16 +88,20 @@ internal static class BoundedJsonPathFilter
         {
             var root = path[index++] == '$';
             usesRoot |= root;
-            var singular = ReadSegments(path, ref index, allowWildcard: !root);
+            var singular = ReadSegments(path, ref index);
             return (true, singular);
         }
-        // These built-ins have bounded work on a relative nodelist without
-        // recursion or unions. Do not admit dynamic/regex or custom functions.
+        // These built-ins have bounded work on a nodelist without recursion
+        // or unions. Root queries receive the separate repeated-root charge.
+        // Do not admit dynamic/regex or custom functions.
         if (Take(path, ref index, "count") || Take(path, ref index, "value"))
         {
             Require(path, ref index, "(");
-            Require(path, ref index, "@");
-            ReadSegments(path, ref index, allowWildcard: true);
+            SkipWhitespace(path, ref index);
+            if (index >= path.Length || path[index] is not ('@' or '$'))
+                throw Invalid();
+            usesRoot |= path[index++] == '$';
+            ReadSegments(path, ref index);
             Require(path, ref index, ")");
             return (false, true);
         }
@@ -119,7 +123,7 @@ internal static class BoundedJsonPathFilter
         return (false, true);
     }
 
-    private static bool ReadSegments(string path, ref int index, bool allowWildcard)
+    private static bool ReadSegments(string path, ref int index)
     {
         var singular = true;
         while (index < path.Length)
@@ -127,7 +131,7 @@ internal static class BoundedJsonPathFilter
             if (path[index] == '.')
             {
                 index++;
-                if (allowWildcard && index < path.Length && path[index] == '*')
+                if (index < path.Length && path[index] == '*')
                 {
                     singular = false;
                     index++;
@@ -143,18 +147,21 @@ internal static class BoundedJsonPathFilter
             {
                 index++;
                 SkipWhitespace(path, ref index);
-                if (allowWildcard && Take(path, ref index, "*"))
+                if (Take(path, ref index, "*"))
                     singular = false;
                 else if (index < path.Length && path[index] is '\'' or '"')
                     ReadQuoted(path, ref index);
                 else
                 {
-                    if (index < path.Length && path[index] == '-')
-                        index++;
-                    var start = index;
-                    while (index < path.Length && char.IsAsciiDigit(path[index]))
-                        index++;
-                    if (start == index)
+                    var hasIndex = ReadOptionalIndex(path, ref index);
+                    if (Take(path, ref index, ":"))
+                    {
+                        singular = false;
+                        ReadOptionalIndex(path, ref index);
+                        if (Take(path, ref index, ":"))
+                            ReadOptionalIndex(path, ref index);
+                    }
+                    else if (!hasIndex)
                         throw Invalid();
                 }
                 Require(path, ref index, "]");
@@ -163,6 +170,23 @@ internal static class BoundedJsonPathFilter
                 break;
         }
         return singular;
+    }
+
+    // A slice selects each member at most once; unlike unions or descent it
+    // cannot multiply visits to a candidate subtree. The library validates
+    // integer syntax/range and clamps slice bounds during evaluation.
+    private static bool ReadOptionalIndex(string path, ref int index)
+    {
+        SkipWhitespace(path, ref index);
+        var negative = index < path.Length && path[index] == '-';
+        if (negative)
+            index++;
+        var start = index;
+        while (index < path.Length && char.IsAsciiDigit(path[index]))
+            index++;
+        if (negative && start == index)
+            throw Invalid();
+        return start != index;
     }
 
     private static void ReadQuoted(string path, ref int index)

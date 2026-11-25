@@ -549,6 +549,8 @@ public sealed class ForwardingTests
     [InlineData("$.items[?@.score >= $.min]")]
     [InlineData("$.items[?count(@.score) == 1 && @.score >= 10]")]
     [InlineData("$.items[?value(@.score) >= 10]")]
+    [InlineData("$.items[?count($.items[0:1]) == 1 && @.score >= 10]")]
+    [InlineData("$.items[?value($.items[0:1].score) >= 10]")]
     public async Task FilterInspectionSelectsMockOrRealAndFailsClosedBeforeAnyAdditionalCall(string selector)
     {
         await using var upstream = await Upstream.StartAsync();
@@ -591,6 +593,7 @@ public sealed class ForwardingTests
     [Theory]
     [InlineData("$.items[?@.score >= 10]", 201, 1)]
     [InlineData("$.items[?@.score >= $.min]", 400, 0)]
+    [InlineData("$.items[?count($.items[*]) == 1]", 400, 0)]
     public async Task RepeatedRootTraversalIsChargedSeparatelyFromRelativeFilterWork(string selector, int expectedStatus, int expectedCalls)
     {
         await using var upstream = await Upstream.StartAsync();

@@ -114,13 +114,15 @@ the product of selector counts across segments cannot exceed four. A maximum
 of one recursive descent is allowed. One filter (not in a selector union) is
 supported, for example `$.items[?@.active == true].value` or
 `$.items[?(@.price >= 10 && @.available) || @.override == true]`.
-Filters accept singular relative and root paths, scalar literals, the six comparison
-operators, existence (including relative wildcard paths), AND/OR/NOT and up to eight
-nested logical levels. `count(@.items[*])` and `value(@.items[*])` accept bounded
-relative queries with name, index or wildcard segments; comparisons still require
-singular queries or value-returning functions. Negated terms are explicitly grouped
-before library evaluation to preserve NOT precedence. Nested filters, predicate
-unions/slices/descent, non-singular root references, other functions and filters
+Filters accept relative and root paths, scalar literals, the six comparison
+operators, existence (including wildcard and slice paths), AND/OR/NOT and up to eight
+nested logical levels. `count(@.items[*])`, `value(@.items[0:1])` and
+`count($.items[*])` accept bounded relative or root queries with name, index,
+wildcard or slice segments; comparisons still require singular queries or
+value-returning functions. Slices cannot duplicate visits to a candidate subtree;
+root queries receive the separate repeated-root work charge even inside functions.
+Negated terms are explicitly grouped before library evaluation to preserve NOT
+precedence. Nested filters, predicate unions/descent, other functions and filters
 combined with recursive descent are rejected. The pinned JsonPath.Net 3.0.2
 `length()` counts text elements instead of Unicode scalar values for strings;
 it is not admitted until RFC-correct behavior can be provided.

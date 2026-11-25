@@ -76,7 +76,7 @@ map, not a declaration that an unexecuted candidate passed.
 
 Current limitations are explicit in configuration.md. The bounded JSONPath subset
 is not unrestricted RFC 9535; the gateway uses the actual JsonPath.Net parser and
-evaluation for supported selectors, including slices, bounded unions, one recursive descent or a single bounded filter. Case-distinct and repeated cookie names are exercised through the public middleware. Singular root references, relative wildcard existence and bounded relative `count()`/`value()` have focused middleware and real-upstream regression cases. Other functions, non-singular root queries, nested filters, predicate unions/slices/descent, filters with descent and repeated descent remain unsupported. The regex timeout oracle uses an actual
+evaluation for supported selectors, including slices, bounded unions, one recursive descent or a single bounded filter. Case-distinct and repeated cookie names are exercised through the public middleware. Relative and root wildcard/slice existence and bounded `count()`/`value()` have focused middleware and real-upstream regression cases, including repeated-root budget rejection. Other functions, nested filters, predicate unions/descent, filters with descent and repeated descent remain unsupported. The regex timeout oracle uses an actual
 engine timeout at the shared classification boundary, while production rules
 use nonbacktracking patterns and bounded evaluation. The DNS oracle uses a local
 TCP listener to detect forbidden connection attempts; external DNS rebinding
