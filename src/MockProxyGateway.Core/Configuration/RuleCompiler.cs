@@ -219,7 +219,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             if (hasFilter)
             {
                 var normalized = BoundedJsonPathFilter.Normalize(key, out var predicateRepeatedTraversal,
-                    out var predicateUnionProduct, out var hasNestedFilter, out var hasRepeatedPredicateDescent);
+                    out var predicateUnionProduct, out var hasNestedFilter, out var hasRepeatedPredicateDescent, out var localFilters);
                 // Two outer descents can repeat filter candidates; two
                 // predicate descents can repeat traversal per candidate.
                 // Either requires a cubic whole-input bound. Combining both
@@ -242,6 +242,21 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 pathMultiplier *= predicateUnionProduct;
                 if (!JsonPath.TryParse(normalized, out jsonPath))
                     throw Invalid("Invalid bounded JSONPath filter.");
+                // Replace only selectors on this newly compiled path. The
+                // library's selector arrays are per path, never process-global.
+                var filterIndex = 0;
+                foreach (var segment in jsonPath.Segments)
+                {
+                    for (var i = 0; i < segment.Selectors.Length; i++)
+                    {
+                        if (segment.Selectors[i] is not FilterSelector)
+                            continue;
+                        if (localFilters.TryGetValue(filterIndex++, out var local))
+                            segment.Selectors[i] = local;
+                    }
+                }
+                if (filterIndex != filterCount)
+                    throw Invalid("JSONPath filter count changed during compilation.");
                 // Charge predicate operations per node and input byte. The resolver
                 // separately charges repeated traversal when candidate subtrees may overlap.
                 pathMultiplier *= key.Length + 1;

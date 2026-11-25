@@ -140,10 +140,17 @@ predicate is admitted (e.g. `$.items[?@.nested[?@.active == true]]`), including
 `count()` and `value()` over the nested results. Expressions containing a nested
 filter cannot contain root references inside predicates, predicate unions or
 recursive descent;
-additional nested levels, other functions and a third descent inside any query
-remain rejected. The locked JsonPath.Net version is 2.2.0 (MIT). `length()` is not admitted
-until RFC-correct Unicode scalar counting and bounded evaluation are verified
-against the actual locked dependency.
+additional nested levels and a third descent inside any query remain rejected.
+The locked JsonPath.Net version is 2.2.0 (MIT). A standalone outer filter
+`length(@.name) == 2` (or a root/singular indexed query with any of the six
+comparison operators and an exact numeric literal) uses a gateway-local
+selector: string length counts Unicode scalar values, object/array length
+counts members, and unsupported or missing values produce Nothing. The
+[pinned upstream length implementation](https://github.com/json-everything/json-everything/blob/f53d4d27eeed6a73d377bf4188175f0b8a46f856/src/JsonPath/LengthFunction.cs)
+counts graphemes, so the gateway does not evaluate that function or modify
+the process-global registry. The same traversal/byte budgets apply. Compound
+or nested length expressions, other length argument forms, `match()` and
+`search()` remain rejected.
 The request budget is charged before evaluation for body nodes multiplied by
 the union product; when descent is present, the charge also accounts for
 descendant traversal and every subsequent segment. Filters conservatively

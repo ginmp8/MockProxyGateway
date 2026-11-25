@@ -255,6 +255,9 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[0,1,2,3,?@.nested[?@.active]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[0,?@.nested[?@.active]][0,1,2]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?@.active],?@.other[?@.value]]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?length(@.names[*]) == 2]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?length(@.name) == 2 && @.active]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?length(@.name)]\",\"operator\":\"exists\"}")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """
@@ -427,6 +430,19 @@ public sealed class GatewayTests
     [InlineData("$.items[?@.nested[?@.active],?@.override].value", "{\"items\":[{\"nested\":[{}],\"value\":42}]}", 404)]
     [InlineData("$.items[?@.nested[?@.active]][?@.value].value", "{\"items\":[{\"nested\":[{\"active\":true}],\"child\":{\"value\":42}}]}", 201)]
     [InlineData("$.items[?@.nested[?@.active]][?@.value].value", "{\"items\":[{\"nested\":[{}],\"child\":{\"value\":42}}]}", 404)]
+    [InlineData("$.items[?length(@.name) == 2].value", "{\"items\":[{\"name\":\"e\\u0301\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(@.name) == 1].value", "{\"items\":[{\"name\":\"e\\u0301\",\"value\":42}]}", 404)]
+    [InlineData("$.items[?length(@.name) == 1].value", "{\"items\":[{\"name\":\"\\ud83d\\ude00\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(@.name) == 0].value", "{\"items\":[{\"name\":\"\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(@.name) >= 2].value", "{\"items\":[{\"name\":[null,true],\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(@['name']) <= 1].value", "{\"items\":[{\"name\":{\"key\":null},\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(@.name) < 2].value", "{\"items\":[{\"name\":[],\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(@.name) > 0].value", "{\"items\":[{\"name\":true,\"value\":42}]}", 404)]
+    [InlineData("$.items[?length(@.name) == 0].value", "{\"items\":[{\"name\":null,\"value\":42}]}", 404)]
+    [InlineData("$.items[?length(@.name) != 0].value", "{\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?length($.label) == 2].value", "{\"label\":\"e\\u0301\",\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[0,?length(@.name) == 2].value", "{\"items\":[{\"value\":1},{\"name\":\"e\\u0301\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?@.override,?length(@.name) == 2].value", "{\"items\":[{\"name\":\"e\\u0301\",\"value\":42}]}", 201)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """

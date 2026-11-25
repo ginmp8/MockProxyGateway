@@ -648,6 +648,37 @@ public sealed class ForwardingTests
         Assert.Empty(upstream.Requests);
     }
 
+    [Theory]
+    [InlineData("$.items[?length(@.name) == 2]", false, 202, 0)]
+    [InlineData("$.items[?length(@.name) == 1]", false, 201, 1)]
+    [InlineData("$.items[?length($.label) == 2]", true, 400, 0)]
+    public async Task LengthFilterIsScalarCorrectAndBudgetedWithoutGlobalRegistration(string selector, bool large, int status, int calls)
+    {
+        Assert.True(Json.Path.FunctionRepository.TryGet("length", out var originalFunction));
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"length","priority":1,"conditions":{"source":"body","key":"$.items","operator":"exists"},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        rules["services"]!["a"]!["rules"]![0]!["conditions"]!["key"] = selector;
+        await using var gateway = await StartGatewayAsync(rules, upstream);
+        using var client = gateway.GetTestClient();
+        var payload = "{\"label\":\"e\\u0301\",\"items\":[" +
+            string.Join(',', Enumerable.Repeat("{\"name\":\"e\\u0301\"}", large ? 80 : 1)) + "]}";
+        using var body = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync("/mock-proxy/a/check", body, TestContext.Current.CancellationToken);
+        Assert.Equal((HttpStatusCode)status, response.StatusCode);
+        Assert.Equal(calls, upstream.Requests.Count);
+        if (calls == 1)
+            Assert.Equal(payload, Assert.Single(upstream.Requests).Body);
+        Assert.True(Json.Path.FunctionRepository.TryGet("length", out var currentFunction));
+        Assert.Same(originalFunction, currentFunction);
+    }
+
     [Fact]
     public async Task NestedRelativeFilterSelectsMockOrRealWithoutExtraOutboundCalls()
     {
