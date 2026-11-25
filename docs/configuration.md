@@ -125,15 +125,16 @@ subtree; unions preserve duplicates and are charged for cumulative multiplicity.
 Root queries receive the separate repeated-root work charge even inside functions.
 Negated terms are explicitly grouped before library evaluation to preserve NOT
 precedence. One outer recursive descent may precede, follow or contain the
-single filter. Nested filters, predicate descent, other functions and repeated
-descent are rejected. The pinned JsonPath.Net 3.0.2
+single filter. A predicate query may contain one descent, such as
+`@..tag` or `count(@..tag)`; such queries are non-singular. Nested filters,
+other functions and repeated descent within a query are rejected. The pinned JsonPath.Net 3.0.2
 `length()` counts text elements instead of Unicode scalar values for strings;
 it is not admitted until RFC-correct behavior can be provided.
 The request budget is charged before evaluation for body nodes multiplied by
 the union product; when descent is present, the charge also accounts for
 descendant traversal and every subsequent segment. Filters conservatively
 charge for predicate length, body nodes and body bytes before evaluation;
-root references and filters combined with descent additionally charge a
+root references and any descent combined with filters additionally charge a
 worst-case whole-input traversal and comparison for every possible candidate;
 they also validate all numeric values in the inspected body once before the
 first filter, rejecting values that cannot be represented exactly as decimals.

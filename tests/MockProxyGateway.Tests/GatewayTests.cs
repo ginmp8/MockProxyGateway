@@ -231,6 +231,8 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@.nested[?@.value]) == 1]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@.nested) ]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[*] == 42]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@..tag == 42]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@..nested..tag) == 2]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[*] == @.value]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?@.value]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$..items[?@.value]..value\",\"operator\":\"exists\"}")]
@@ -356,6 +358,16 @@ public sealed class GatewayTests
     [InlineData("$..[?@.active == true].value", "{\"nested\":{\"items\":[{\"active\":false,\"value\":42}]}}", 404)]
     [InlineData("$..items[?count(@.tags[0,0]) == 2].value", "{\"items\":[{\"tags\":[1],\"value\":42}]}", 201)]
     [InlineData("$..items[?count(@.tags[0,0]) == 2].value", "{\"items\":[{\"tags\":[],\"value\":42}]}", 404)]
+    [InlineData("$.items[?@..tag].value", "{\"items\":[{\"nested\":{\"tag\":null},\"value\":42}]}", 201)]
+    [InlineData("$.items[?@..tag].value", "{\"items\":[{\"nested\":{\"other\":null},\"value\":42}]}", 404)]
+    [InlineData("$.items[?count(@..tag) == 2].value", "{\"items\":[{\"tag\":1,\"nested\":{\"tag\":2},\"value\":42}]}", 201)]
+    [InlineData("$.items[?count(@..tag) == 2].value", "{\"items\":[{\"nested\":{\"tag\":1},\"value\":42}]}", 404)]
+    [InlineData("$.items[?value(@..['tag']) == null].value", "{\"items\":[{\"nested\":{\"tag\":null},\"value\":42}]}", 201)]
+    [InlineData("$.items[?value(@..['tag']) == null].value", "{\"items\":[{\"nested\":{\"other\":null},\"value\":42}]}", 404)]
+    [InlineData("$.items[?count($..flag) == 1].value", "{\"flags\":{\"flag\":true},\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?count($..flag) == 1].value", "{\"flags\":{\"other\":true},\"items\":[{\"value\":42}]}", 404)]
+    [InlineData("$..items[?@..tag].value", "{\"nested\":{\"items\":[{\"tag\":true,\"value\":42}]}}", 201)]
+    [InlineData("$..items[?@..tag].value", "{\"nested\":{\"items\":[{\"other\":true,\"value\":42}]}}", 404)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """

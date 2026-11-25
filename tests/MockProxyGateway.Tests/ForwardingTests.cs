@@ -646,6 +646,8 @@ public sealed class ForwardingTests
     [Theory]
     [InlineData("$.items[?@.score >= 10]", 201, 1)]
     [InlineData("$..items[?@.score >= 10]", 400, 0)]
+    [InlineData("$.items[?@..score]", 400, 0)]
+    [InlineData("$.items[?count(@..score) == 2]", 400, 0)]
     public async Task DescentFilterOverlapIsChargedBeforeForwarding(string selector, int expectedStatus, int expectedCalls)
     {
         await using var upstream = await Upstream.StartAsync();

@@ -213,10 +213,10 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             }
             if (hasFilter)
             {
-                var normalized = BoundedJsonPathFilter.Normalize(key, out var hasRootReference, out var predicateUnionProduct);
+                var normalized = BoundedJsonPathFilter.Normalize(key, out var predicateRepeatedTraversal, out var predicateUnionProduct);
                 // Descent may make filter candidate subtrees overlap. Charge worst-case
                 // repeated traversal even for a relative predicate in that case.
-                hasRepeatedTraversal = hasRootReference || recursive;
+                hasRepeatedTraversal = predicateRepeatedTraversal || recursive;
                 if (predicateUnionProduct > 4 / pathMultiplier)
                     throw Invalid("JSONPath predicate union complexity limit exceeded.");
                 pathMultiplier *= predicateUnionProduct;
