@@ -16,12 +16,16 @@ internal sealed class BoundedRegexFilterSelector(JsonPath argument, BoundedRegex
     {
         foreach (var candidate in Children.Evaluate(match, rootNode))
         {
-            var value = argument.Evaluate(argument.Scope == PathScope.Global ? rootNode : candidate.Value)
-                .Matches.FirstOrDefault()?.Value;
-            if (value is JsonValue scalar && scalar.TryGetValue<string>(out var text) &&
-                regex.IsMatch(text))
+            if (MatchesCandidate(rootNode, candidate.Value))
                 yield return candidate;
         }
+    }
+
+    internal bool MatchesCandidate(JsonNode? rootNode, JsonNode? candidate)
+    {
+        var value = argument.Evaluate(argument.Scope == PathScope.Global ? rootNode : candidate)
+            .Matches.FirstOrDefault()?.Value;
+        return value is JsonValue scalar && scalar.TryGetValue<string>(out var text) && regex.IsMatch(text);
     }
 
     internal static CompiledPattern Compile(string pattern, bool fullMatch)

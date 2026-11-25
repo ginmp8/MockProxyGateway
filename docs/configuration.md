@@ -141,16 +141,15 @@ predicate is admitted (e.g. `$.items[?@.nested[?@.active == true]]`), including
 filter cannot contain root references inside predicates, predicate unions or
 recursive descent;
 additional nested levels and a third descent inside any query remain rejected.
-The locked JsonPath.Net version is 2.2.0 (MIT). A standalone outer filter
+The locked JsonPath.Net version is 2.2.0 (MIT). An outer filter
 `length(@.name) == 2` (or a root/singular indexed query with any of the six
 comparison operators and an exact numeric literal) uses a gateway-local
 selector: string length counts Unicode scalar values, object/array length
 counts members, and unsupported or missing values produce Nothing. The
 [pinned upstream length implementation](https://github.com/json-everything/json-everything/blob/f53d4d27eeed6a73d377bf4188175f0b8a46f856/src/JsonPath/LengthFunction.cs)
 counts graphemes, so the gateway does not evaluate that function or modify
-the process-global registry. The same traversal/byte budgets apply. Compound
-or nested length expressions and other length argument forms remain rejected.
-Standalone `match(@.name, 'test-.*')` and `search(@.name, '[A-Z]+')` use private
+the process-global registry. The same traversal/byte budgets apply. Outer logical combinations with ordinary predicates and the other private functions are supported; nested private-function filters and other length argument forms remain rejected.
+`match(@.name, 'test-.*')` and `search(@.name, '[A-Z]+')` use private
 selectors with constant I-Regexp patterns and singular relative/root queries.
 Supported patterns: Unicode literals (including literal ^ and $), scalar dot
 (excluding CR/LF), escaped literals, positive and negated Unicode scalar literal classes/ranges,
@@ -161,7 +160,7 @@ I-Regexp Boolean semantics; group depth is limited to eight. Classes have at mos
 the entire string; search looks for a substring. Missing and non-string values
 do not match. The nonbacktracking engine has a 25 ms timeout and candidate
 visits are reserved from the shared 64-evaluation budget before evaluation.
-Outer descent and compound/nested regex predicates remain unsupported.
+Outer descent with regex and nested private-function predicates remain unsupported. Outer compound predicates are limited to 16 leaves and eight logical nesting levels; AND, OR and NOT preserve precedence and short-circuit evaluation. Reserve potential visits for every regex leaf before evaluation, even if skipped by short circuit.
 The request budget is charged before evaluation for body nodes multiplied by
 the union product; when descent is present, the charge also accounts for
 descendant traversal and every subsequent segment. Filters conservatively

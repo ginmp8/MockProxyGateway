@@ -241,7 +241,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 if (predicateUnionProduct > 4 / pathMultiplier)
                     throw Invalid("JSONPath predicate union complexity limit exceeded.");
                 pathMultiplier *= predicateUnionProduct;
-                var regexFilters = localFilters.Values.Count(x => x is BoundedRegexFilterSelector);
+                var regexFilters = localFilters.Values.OfType<BoundedCompoundFilterSelector>().Sum(x => x.RegexCount);
                 if (regexFilters != 0)
                 {
                     if (recursive)

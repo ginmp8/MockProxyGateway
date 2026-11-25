@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Json.Path;
 
 namespace MockProxyGateway.Configuration;
@@ -38,9 +39,20 @@ internal static class BoundedJsonPathFilter
             {
                 if (Take(path, ref index, "?"))
                 {
-                    if (TryReadLengthFilter(path, ref index, out var local, ref usesRepeatedTraversal) ||
-                        TryReadRegexFilter(path, ref index, out local, ref usesRepeatedTraversal))
-                        localFilters.Add(filterIndex, local!);
+                    if (ContainsLocalFunction(path, index))
+                    {
+                        var start = index;
+                        var parser = new LocalExpressionParser(path, index, usesRepeatedTraversal, maxUnionProduct,
+                            hasNestedFilter, hasRepeatedPredicateDescent);
+                        var predicate = parser.ReadOr(0);
+                        index = parser.Position;
+                        usesRepeatedTraversal = parser.UsesRepeatedTraversal;
+                        maxUnionProduct = parser.MaxUnionProduct;
+                        hasNestedFilter = parser.HasNestedFilter;
+                        hasRepeatedPredicateDescent = parser.HasRepeatedPredicateDescent;
+                        localFilters.Add(filterIndex, new BoundedCompoundFilterSelector(predicate,
+                            parser.RegexCount, path[start..index]));
+                    }
                     else
                         ReadExpression(path, ref index, 0, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, ref hasRepeatedPredicateDescent, filterDepth);
                     filterIndex++;
@@ -62,8 +74,149 @@ internal static class BoundedJsonPathFilter
         return normalized.ToString();
     }
 
+    // Detect private function calls in this outer predicate, skipping quoted
+    // strings and nested selector brackets. Ordinary expressions retain the
+    // original admission and normalization path.
+    private static bool ContainsLocalFunction(string path, int index)
+    {
+        var brackets = 0;
+        var parentheses = 0;
+        while (index < path.Length)
+        {
+            var current = path[index];
+            if (current is '\'' or '"')
+            {
+                ReadQuoted(path, ref index);
+                continue;
+            }
+            if (current == '[')
+                brackets++;
+            else if (current == ']')
+            {
+                if (brackets == 0)
+                    return false;
+                brackets--;
+            }
+            else if (brackets == 0)
+            {
+                if (current == '(')
+                    parentheses++;
+                else if (current == ')')
+                    parentheses--;
+                else if (current == ',' && parentheses == 0)
+                    return false;
+                else
+                {
+                    var cursor = index;
+                    if ((Take(path, ref cursor, "length") || Take(path, ref cursor, "match") ||
+                         Take(path, ref cursor, "search")) && Take(path, ref cursor, "("))
+                        return true;
+                }
+            }
+            index++;
+        }
+        return false;
+    }
+
+    // Use the pinned library's public leaf-expression evaluation with the
+    // actual root and current candidate. Private predicates never mutate the
+    // host function registry or duplicate candidate nodes.
+    private sealed class LocalExpressionParser(string path, int start, bool repeatedTraversal,
+        int unionProduct, bool nestedFilter, bool repeatedDescent)
+    {
+        private int _index = start;
+        private bool _usesRepeatedTraversal = repeatedTraversal;
+        private int _maxUnionProduct = unionProduct;
+        private bool _hasNestedFilter = nestedFilter;
+        private bool _hasRepeatedPredicateDescent = repeatedDescent;
+        private int _termCount;
+        internal int Position => _index;
+        internal bool UsesRepeatedTraversal => _usesRepeatedTraversal;
+        internal int MaxUnionProduct => _maxUnionProduct;
+        internal bool HasNestedFilter => _hasNestedFilter;
+        internal bool HasRepeatedPredicateDescent => _hasRepeatedPredicateDescent;
+        internal int RegexCount { get; private set; }
+
+        internal Func<JsonNode?, JsonNode?, bool> ReadOr(int depth)
+        {
+            var predicate = ReadAnd(depth);
+            while (Take(path, ref _index, "||"))
+            {
+                var left = predicate;
+                var right = ReadAnd(depth);
+                predicate = (root, candidate) => left(root, candidate) || right(root, candidate);
+            }
+            return predicate;
+        }
+
+        private Func<JsonNode?, JsonNode?, bool> ReadAnd(int depth)
+        {
+            var predicate = ReadTerm(depth);
+            while (Take(path, ref _index, "&&"))
+            {
+                var left = predicate;
+                var right = ReadTerm(depth);
+                predicate = (root, candidate) => left(root, candidate) && right(root, candidate);
+            }
+            return predicate;
+        }
+
+        private Func<JsonNode?, JsonNode?, bool> ReadTerm(int depth)
+        {
+            if (depth > 8)
+                throw Invalid();
+            if (Take(path, ref _index, "!"))
+            {
+                var operand = ReadTerm(depth + 1);
+                return (root, candidate) => !operand(root, candidate);
+            }
+            if (Take(path, ref _index, "("))
+            {
+                var operand = ReadOr(depth + 1);
+                Require(path, ref _index, ")");
+                return operand;
+            }
+            if (++_termCount > 16)
+                throw Invalid();
+            if (TryReadLengthFilter(path, ref _index, out var local, ref _usesRepeatedTraversal))
+                return ((BoundedLengthFilterSelector)local!).MatchesCandidate;
+            if (TryReadRegexFilter(path, ref _index, out local, ref _usesRepeatedTraversal))
+            {
+                RegexCount++;
+                return ((BoundedRegexFilterSelector)local!).MatchesCandidate;
+            }
+
+            SkipWhitespace(path, ref _index);
+            var leafStart = _index;
+            var grouping = new List<(int Offset, char Character)>();
+            var left = ReadOperand(path, ref _index, grouping, ref _usesRepeatedTraversal,
+                ref _maxUnionProduct, ref _hasNestedFilter, ref _hasRepeatedPredicateDescent, 0);
+            if (Take(path, ref _index, "==") || Take(path, ref _index, "!=") ||
+                Take(path, ref _index, "<=") || Take(path, ref _index, ">=") ||
+                Take(path, ref _index, "<") || Take(path, ref _index, ">"))
+            {
+                var right = ReadOperand(path, ref _index, grouping, ref _usesRepeatedTraversal,
+                    ref _maxUnionProduct, ref _hasNestedFilter, ref _hasRepeatedPredicateDescent, 0);
+                if (!left.Comparable || !right.Comparable)
+                    throw Invalid();
+            }
+            else if (!left.Query)
+                throw Invalid();
+
+            // Keep the existing unary NOT correction for ordinary nested
+            // predicates; outer logical precedence is handled above.
+            var expression = new StringBuilder(path[leafStart.._index]);
+            foreach (var (offset, character) in grouping.OrderByDescending(x => x.Offset))
+                expression.Insert(offset - leafStart, character);
+            if (!JsonPath.TryParse("$[?" + expression.ToString().Trim() + "]", out var parsed) ||
+                parsed.Segments[0].Selectors[0] is not FilterSelector filter)
+                throw Invalid();
+            return filter.Expression.Evaluate;
+        }
+    }
+
     // The locked length() counts graphemes instead of Unicode scalars. Admit
-    // a standalone singular-query-to-number comparison with a private selector,
+    // a singular-query-to-number comparison with a private predicate,
     // never by replacing a process-global JsonPath.Net function registration.
     private static bool TryReadLengthFilter(string path, ref int index, out ISelector? selector, ref bool usesRepeatedTraversal)
     {
@@ -398,4 +551,25 @@ internal static class BoundedJsonPathFilter
 
     private static InvalidOperationException Invalid() =>
         new("JSONPath filter exceeds the supported bounded expression grammar.");
+}
+
+// Preserve original nodes and locations; precharge every potential regex leaf
+// even when the actual predicate will short-circuit.
+internal sealed class BoundedCompoundFilterSelector(Func<JsonNode?, JsonNode?, bool> predicate,
+    int regexCount, string expression) : ISelector
+{
+    private static readonly ISelector Children = JsonPath.Parse("$[*]").Segments[0].Selectors[0];
+
+    internal int RegexCount { get; } = regexCount;
+
+    public IEnumerable<Node> Evaluate(Node match, JsonNode? rootNode)
+    {
+        foreach (var candidate in Children.Evaluate(match, rootNode))
+        {
+            if (predicate(rootNode, candidate.Value))
+                yield return candidate;
+        }
+    }
+
+    public void BuildString(StringBuilder builder) => builder.Append('?').Append(expression);
 }

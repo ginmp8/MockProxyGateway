@@ -15,18 +15,23 @@ internal sealed class BoundedLengthFilterSelector(JsonPath argument, decimal exp
     {
         foreach (var candidate in Children.Evaluate(match, rootNode))
         {
-            var value = argument.Evaluate(argument.Scope == PathScope.Global ? rootNode : candidate.Value)
-                .Matches.FirstOrDefault()?.Value;
-            int? length = value switch
-            {
-                JsonObject obj => obj.Count,
-                JsonArray arr => arr.Count,
-                JsonValue scalar when scalar.TryGetValue<string>(out var text) => ScalarCount(text),
-                _ => null
-            };
-            if (Matches(length))
+            if (MatchesCandidate(rootNode, candidate.Value))
                 yield return candidate;
         }
+    }
+
+    internal bool MatchesCandidate(JsonNode? rootNode, JsonNode? candidate)
+    {
+        var value = argument.Evaluate(argument.Scope == PathScope.Global ? rootNode : candidate)
+            .Matches.FirstOrDefault()?.Value;
+        int? length = value switch
+        {
+            JsonObject obj => obj.Count,
+            JsonArray arr => arr.Count,
+            JsonValue scalar when scalar.TryGetValue<string>(out var text) => ScalarCount(text),
+            _ => null
+        };
+        return Matches(length);
     }
 
     private bool Matches(int? length)

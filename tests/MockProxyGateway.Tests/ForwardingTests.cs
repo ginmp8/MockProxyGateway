@@ -718,6 +718,10 @@ public sealed class ForwardingTests
     [InlineData("$.items[?match(@.name, '\\\\p{L}\\\\p{M}')]", false, 202, 0)]
     [InlineData("$.items[?match(@.name, '\\\\p{L}{2}')]", false, 201, 1)]
     [InlineData("$.items[?match(@.name, '\\\\p{L}\\\\p{M}')]", true, 400, 0)]
+    [InlineData("$.items[?match(@.name, '..') && length(@.name) == 2]", false, 202, 0)]
+    [InlineData("$.items[?length(@.name) == 1 || search(@.name, 'z')]", false, 201, 1)]
+    [InlineData("$.items[?!search(@.name, 'z') && match(@.name, '..')]", false, 202, 0)]
+    [InlineData("$.items[?@.name && (search(@.name, 'z') || match(@.name, '..'))]", true, 400, 0)]
     public async Task RegexFilterIsScalarCorrectAndBudgetedWithoutGlobalRegistration(string selector, bool large, int status, int calls)
     {
         Assert.True(Json.Path.FunctionRepository.TryGet("match", out var originalFunction));
