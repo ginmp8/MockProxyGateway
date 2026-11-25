@@ -220,7 +220,7 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"header\",\"key\":\"x\",\"operator\":\"greaterThan\",\"value\":2}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.value\",\"operator\":\"in\",\"value\":[]}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$..items..value..tag\",\"operator\":\"exists\"}")]
-    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(@.name, 'x')]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(@.name, 'x') || @.active]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.value == $.expected[*]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count($.items[*])]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.tags[0:1] == 42]\",\"operator\":\"exists\"}")]
@@ -470,6 +470,8 @@ public sealed class GatewayTests
     [InlineData("$.items[0,?match(@.name, 'x')].value", "{\"items\":[{\"value\":0},{\"name\":\"y\",\"value\":42}]}", 404)]
     [InlineData("$.items[?match(@.name, \"x\")].value", "{\"items\":[{\"name\":\"x\",\"value\":42}]}", 201)]
     [InlineData("$.items[?match(@.name, 'a\\\\.b')].value", "{\"items\":[{\"name\":\"a.b\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?match(@.name, 'x')].value", "{\"items\":[{\"name\":\"x\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?match(@.name, 'x')].value", "{\"items\":[{\"name\":\"xx\",\"value\":42}]}", 404)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """
