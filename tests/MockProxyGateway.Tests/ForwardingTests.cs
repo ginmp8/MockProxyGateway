@@ -534,6 +534,10 @@ public sealed class ForwardingTests
     [Theory]
     [InlineData("{", "application/json", 400)]
     [InlineData("not-json", "text/plain", 415)]
+    [InlineData("{\"customer\":{\"riskScore\":10},\"unselected\":\"\\ud800\"}", "application/json", 400)]
+    [InlineData("{\"customer\":{\"riskScore\":10},\"unselected\":\"\\udc00\"}", "application/json", 400)]
+    [InlineData("{\"customer\":{\"riskScore\":10},\"\\ud800\":1}", "application/json", 400)]
+    [InlineData("{\"customer\":{\"riskScore\":10},\"customer\":{\"riskScore\":90}}", "application/json", 400)]
     public async Task RequiredInspectionFailureCannotReachDefaultProxy(string payload, string mediaType, int expected)
     {
         await using var upstream = await Upstream.StartAsync();
@@ -569,6 +573,30 @@ public sealed class ForwardingTests
         using var forwarded = await client.SendAsync(real, ct);
         Assert.Equal(HttpStatusCode.Created, forwarded.StatusCode);
         Assert.Equal(payload, Assert.Single(upstream.Requests).Body);
+    }
+
+    [Fact]
+    public async Task InvalidUtf8InUnselectedBodyStringCannotReachDefaultProxy()
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"body","priority":1,"conditions":{"source":"body","key":"$.selected","operator":"equals","value":true},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        await using var gateway = await StartGatewayAsync(rules, upstream);
+        using var client = gateway.GetTestClient();
+        // Invalid UTF-8 is in a field not selected by the rule.
+        byte[] payload = [.. Encoding.UTF8.GetBytes("{\"selected\":false,\"other\":\""), 0xff,
+            .. Encoding.UTF8.GetBytes("\"}")];
+        using var body = new ByteArrayContent(payload);
+        body.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        using var response = await client.PostAsync("/mock-proxy/a/check", body, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty(upstream.Requests);
     }
 
     [Theory]

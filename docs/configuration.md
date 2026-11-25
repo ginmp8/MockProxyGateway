@@ -176,8 +176,10 @@ first filter, rejecting values that cannot be represented exactly as decimals.
 Numeric range comparisons reject unsupported decimal precision rather than rounding. Condition depth is at most 12; rule count 4096; condition nodes
 16384; body nodes 16384; weighted evaluation budget 65536; at most 64 regex
 evaluations per request. Body selector caching is bounded to twice the inspected
-body byte limit. Inspection is lazy; malformed JSON 400, oversized 413, unsupported
-media type 415; errors never select the proxy fallback.
+body byte limit. Inspection is lazy; malformed JSON (including duplicate object
+names, invalid UTF-8 and unpaired Unicode surrogate escapes) returns 400,
+oversized bodies 413, unsupported media type 415; errors never select the proxy
+fallback. Bodies not requiring inspection are not decoded by the gateway.
 
 Configuration document size 4 MiB; mock body size 4 MiB each and 16 MiB aggregate
 per compiled snapshot; service and destination counts at most 256 each; endpoints

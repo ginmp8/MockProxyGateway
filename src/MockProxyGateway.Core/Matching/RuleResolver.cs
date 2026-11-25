@@ -227,8 +227,18 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
             }
             _bodyByteLength = (int)buffer.Length;
             _body = JsonNode.Parse(buffer.ToArray(), documentOptions: new JsonDocumentOptions { MaxDepth = 64 });
-            // Materialize once to validate duplicate keys and bound node count before JSONPath evaluation.
-            VisitBody(_body);
+            // Materialize once to validate duplicate keys, Unicode strings and
+            // node count before JSONPath evaluation (even for unselected fields).
+            try
+            {
+                VisitBody(_body);
+            }
+            catch (InvalidOperationException)
+            {
+                // System.Text.Json decodes string values lazily and can throw
+                // here for malformed Unicode rather than at JsonNode.Parse.
+                throw new RequestFailure(400, "body-json");
+            }
             _bodyLoaded = true;
         }
         catch (Exception ex) when (ex is JsonException or ArgumentException)
@@ -243,6 +253,7 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
 
     private void VisitBody(JsonNode? node)
     {
+        context.RequestAborted.ThrowIfCancellationRequested();
         if (++_bodyNodes > 16384)
             throw new RequestFailure(400, "body-complexity");
         if (node is JsonObject obj)
@@ -254,6 +265,13 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
         {
             foreach (var value in array)
                 VisitBody(value);
+        }
+        else if (node is JsonValue scalar && scalar.TryGetValue<JsonElement>(out var element) &&
+            element.ValueKind == JsonValueKind.String)
+        {
+            // Force decoding so invalid UTF-8 and unpaired surrogate escapes
+            // cannot be treated as a non-match or an unexpected action error.
+            _ = element.GetString();
         }
     }
 
