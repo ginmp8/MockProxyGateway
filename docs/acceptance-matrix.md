@@ -57,7 +57,7 @@ map, not a declaration that an unexecuted candidate passed.
 | --- | --- |
 | AC-01 | Solution/central props/lockfiles; CI restore/build/pack and inspect-package.py |
 | AC-02 | scripts/package-smoke.sh: clean package-only host; default/custom prefix, segment boundary, unrelated routes, mock and proxy |
-| AC-03 | src/MockProxyGateway.Host/Program.cs; Docker smoke |
+| AC-03 | src/MockProxyGateway.Host/Program.cs; ForwardingTests.StandaloneCompositionUsesCoreThroughWebApplicationFactory; Docker smoke |
 | AC-04 | Scenario coverage table above; pinned baseline and actual outbound counts |
 | AC-05 | GatewayTests.ExactMethodAndRouteSpecificityOverrideWildcardAndServiceDefault; pinned example and maintenance/no-default cases |
 | AC-06 | ForwardingTests.ConcurrentRequestsAndHotRuleChangesRemainIsolated; controlled expiry; conflict diagnostics |
@@ -67,8 +67,8 @@ map, not a declaration that an unexecuted candidate passed.
 | AC-10 | Pinned mock scenario tests, GatewayTests.HeadAndEmptyStatusesDoNotWriteResponseBodies, DelayedMockReturnsConfiguredBodyAfterDelay; ConfigurationTests.FileFixtureIsReadOnlyFromTrustedRoot |
 | AC-11 | ConfigurationTests.SelectedSourcesReloadValidUpdatesAndRetainLastGood, InFlightRequestRetainsOriginalSnapshotAcrossReload, AddingAndRemovingRulesKeepsConcurrentReadersOnWholeSnapshots, ExpiryUsesHostTimeProviderAtTheExactBoundaryWithoutReload |
 | AC-12 | ForwardingTests.RequiredInspectionFailureCannotReachDefaultProxy, FailedMutationIsNotRetriedOrReplacedWithMock |
-| AC-13 | ForwardingTests.OptionalNamedPolicyProtectsRealForwardingAndPreservesSeparateHostPolicy, DeniedDnsAddressNeverEstablishesEvenATcpConnection, UnsafeDestinationRejectedEvenWithExplicitAuthority, credential/redirect/raw-path tests; ConfigurationTests.RegistrationWithoutMiddlewareIsInertEvenInProduction, MissingConfiguredPolicyDeniesGatewayWithoutAffectingHostRoutes, SymlinkFixtureOutsideTrustedRootIsRejected; GatewayTests.InvalidMockHeadersCannotActivate, ProductionActivationFailsEvenWhenAllowlisted |
-| AC-14 | ForwardingTests.GatewayDiagnosticsDoNotLogUpstreamQueryOrCredentials; structured conflict/reload diagnostics in GatewayRuntime/RuleStore |
+| AC-13 | ForwardingTests.OptionalNamedPolicyProtectsRealForwardingAndPreservesSeparateHostPolicy, DeniedDnsAddressNeverEstablishesEvenATcpConnection, UnsafeDestinationRejectedEvenWithExplicitAuthority, credential/redirect/raw-path tests, UnapprovedAuthorityAndUnknownDestinationFailBeforeAnyRequest, InvalidRewriteCannotEscapeRegisteredDestination, RequestSuppliedUrlRemainsDataAndCannotSelectAnAuthority; ConfigurationTests.RegistrationWithoutMiddlewareIsInertEvenInProduction, MissingConfiguredPolicyDeniesGatewayWithoutAffectingHostRoutes, SymlinkFixtureOutsideTrustedRootIsRejected; GatewayTests.InvalidMockHeadersCannotActivate, ProductionActivationFailsEvenWhenAllowlisted |
+| AC-14 | ForwardingTests.GatewayDiagnosticsDoNotLogUpstreamQueryOrCredentials, ConflictAndReloadDiagnosticsIdentifyRulesAndActiveVersionWithoutSensitiveValues |
 | AC-15 | README, configuration.md, rules.schema.json, sample, curl and Docker scripts |
 | AC-16 | .github/workflows/ci.yml and package inspection/smoke |
 | AC-17 | Host Dockerfile and scripts/docker-smoke.sh |

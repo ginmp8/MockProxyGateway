@@ -39,7 +39,19 @@ for name, resolved in lock.items():
     assert license_element is not None and license_element.attrib.get("type") == "expression" and license_element.text == "MIT", (
         "Runtime dependency license differs from reviewed MIT metadata; review explicitly", name, version
     )
+# Test-only dependency metadata is inspected separately. These packages are not
+# redistributed in Core, and do not relax the runtime MIT gate above.
+test_lock = json.loads((root / "tests/MockProxyGateway.Tests/packages.lock.json").read_text())["dependencies"]["net10.0"]
+for name, resolved in sorted(test_lock.items()):
+    if resolved["type"] == "Project" or name in lock:
+        continue
+    version = resolved["resolved"]
+    folder = cache / name.lower() / version
+    nuspec = ET.parse(folder / (name.lower() + ".nuspec")).getroot().find("{*}metadata")
+    license_element = nuspec.find("{*}license")
+    url = nuspec.findtext("{*}licenseUrl")
+    print(f"Test-only {name} {version}: license={license_element.text if license_element is not None else None}, "
+          f"type={license_element.attrib.get('type') if license_element is not None else None}, url={url}")
+    assert license_element is not None or url, ("Missing test-only license metadata", name, version)
     if license_element is not None and license_element.attrib.get("type") == "file":
-        license_path = folder / license_element.text
-        assert license_path.is_file()
-        print(license_path.read_text(encoding="utf-8")[:12000])
+        assert (folder / license_element.text).is_file()

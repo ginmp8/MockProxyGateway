@@ -148,13 +148,13 @@ internal sealed partial class GatewayRuntime : IDisposable
         }
         finally
         {
+            _concurrency.Release();
             if (_logger.IsEnabled(LogLevel.Information))
             {
                 var duration = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
                 Completed(_logger, alias, ruleId, action, context.Response.StatusCode, snapshot.Version,
                     duration, correlation, category);
             }
-            _concurrency.Release();
         }
     }
 

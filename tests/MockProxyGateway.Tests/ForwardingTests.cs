@@ -9,6 +9,8 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -579,6 +581,149 @@ public sealed class ForwardingTests
         Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
         Assert.False(listener.Pending());
         Assert.Empty(upstream.Requests);
+    }
+
+    [Fact]
+    public async Task StandaloneCompositionUsesCoreThroughWebApplicationFactory()
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"local":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"demo":{"default":{"mode":"proxy","destination":"local"},"endpoints":[
+               {"method":"GET","path":"/mock","default":{"mode":"mock","response":{"statusCode":200,"text":"factory-mock"}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["local"]!["baseUrl"] = upstream.BaseUrl;
+        using var factory = new WebApplicationFactory<MockProxyGateway.Host.HostAssemblyMarker>()
+            .WithWebHostBuilder(host =>
+            {
+                host.UseEnvironment("Development");
+                host.ConfigureAppConfiguration((_, configuration) =>
+                    configuration.AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        ["MockProxyGateway:Enabled"] = "true",
+                        ["MockProxyGateway:RuleSource"] = "Configuration",
+                        ["MockProxyGateway:RulesJson"] = rules.ToJsonString(),
+                        ["MockProxyGateway:AllowLoopbackForTests"] = "true",
+                        ["MockProxyGateway:AllowedDestinationAuthorities:0"] = new Uri(upstream.BaseUrl).Authority
+                    }));
+            });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var ct = TestContext.Current.CancellationToken;
+        Assert.Equal("factory-mock", await client.GetStringAsync("/mock-proxy/demo/mock", ct));
+        Assert.Empty(upstream.Requests);
+        using var proxy = await client.GetAsync("/mock-proxy/demo/real", ct);
+        Assert.Equal(HttpStatusCode.Created, proxy.StatusCode);
+        Assert.Equal("upstream", await proxy.Content.ReadAsStringAsync(ct));
+        Assert.Equal("/real", Assert.Single(upstream.Requests).Target);
+        using var health = await client.GetAsync("/health", ct);
+        Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+        Assert.Single(upstream.Requests);
+    }
+
+    [Fact]
+    public async Task UnapprovedAuthorityAndUnknownDestinationFailBeforeAnyRequest()
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"local":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"local"}}}}
+            """)!;
+        rules["destinations"]!["local"]!["baseUrl"] = upstream.BaseUrl;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await using var gateway = await StartGatewayAsync(rules, upstream,
+                configure: o => o.AllowedDestinationAuthorities = []);
+        });
+        rules["services"]!["a"]!["default"]!["destination"] = "unknown";
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await using var gateway = await StartGatewayAsync(rules, upstream);
+        });
+        Assert.Empty(upstream.Requests);
+    }
+
+    [Theory]
+    [InlineData("https://example.test/")]
+    [InlineData("//example.test/")]
+    [InlineData("/safe/%2e%2e/escape")]
+    [InlineData("/safe/%252fescape")]
+    public async Task InvalidRewriteCannotEscapeRegisteredDestination(string rewrite)
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"local":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"local","pathRewrite":"/safe"}}}}
+            """)!;
+        rules["destinations"]!["local"]!["baseUrl"] = upstream.BaseUrl;
+        rules["services"]!["a"]!["default"]!["pathRewrite"] = rewrite;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await using var gateway = await StartGatewayAsync(rules, upstream);
+        });
+        Assert.Empty(upstream.Requests);
+    }
+
+    [Fact]
+    public async Task RequestSuppliedUrlRemainsDataAndCannotSelectAnAuthority()
+    {
+        await using var upstream = await Upstream.StartAsync();
+        await using var forbidden = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"local":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"local"}}}}
+            """)!;
+        rules["destinations"]!["local"]!["baseUrl"] = upstream.BaseUrl;
+        await using var gateway = await StartGatewayAsync(rules, upstream);
+        using var client = gateway.GetTestClient();
+        var ct = TestContext.Current.CancellationToken;
+        var target = Uri.EscapeDataString(forbidden.BaseUrl + "private");
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/mock-proxy/a/check?target=" + target);
+        request.Headers.TryAddWithoutValidation("X-Target-Url", forbidden.BaseUrl);
+        using var response = await client.SendAsync(request, ct);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal("/check?target=" + target, Assert.Single(upstream.Requests).Target);
+        Assert.Empty(forbidden.Requests);
+    }
+
+    [Fact]
+    public async Task ConflictAndReloadDiagnosticsIdentifyRulesAndActiveVersionWithoutSensitiveValues()
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var ct = TestContext.Current.CancellationToken;
+        using var capture = new CaptureProvider();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"local":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"local"},"rules":[
+              {"id":"first","priority":1,"conditions":{"source":"query","key":"secret","operator":"equals","value":"synthetic-secret"},
+               "action":{"mode":"mock","response":{"statusCode":200}}},
+              {"id":"second","priority":1,"conditions":{"source":"query","key":"secret","operator":"equals","value":"synthetic-secret"},
+               "action":{"mode":"mock","response":{"statusCode":201}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["local"]!["baseUrl"] = upstream.BaseUrl;
+        var published = rules.ToJsonString();
+        await using var gateway = await StartGatewayAsync(rules, upstream,
+            provider: () => System.Text.Json.JsonElement.Parse(Volatile.Read(ref published)), capture: capture);
+        using var client = gateway.GetTestClient();
+        using var conflict = await client.GetAsync("/mock-proxy/a/check?secret=synthetic-secret", ct);
+        Assert.Equal(HttpStatusCode.InternalServerError, conflict.StatusCode);
+        Assert.Empty(upstream.Requests);
+        Assert.Contains(capture.Messages, x => x.Message.Contains("first=first", StringComparison.Ordinal) &&
+            x.Message.Contains("second=second", StringComparison.Ordinal) &&
+            x.Message.Contains("configuration=1", StringComparison.Ordinal));
+
+        Volatile.Write(ref published, "{");
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadline &&
+            !capture.Messages.Any(x => x.Message.Contains("reload rejected; retaining version 1", StringComparison.Ordinal)))
+            await Task.Delay(100, ct);
+        Assert.Contains(capture.Messages, x => x.Message.Contains("reload rejected; retaining version 1", StringComparison.Ordinal));
+        using var stillConflict = await client.GetAsync("/mock-proxy/a/check?secret=synthetic-secret", ct);
+        Assert.Equal(HttpStatusCode.InternalServerError, stillConflict.StatusCode);
+        Assert.Empty(upstream.Requests);
+        Assert.DoesNotContain(capture.Messages.Where(x => x.Category.StartsWith("MockProxyGateway.", StringComparison.Ordinal)),
+            x => x.Message.Contains("synthetic-secret", StringComparison.Ordinal));
     }
 
     private static HttpRequestMessage CreateRequest(string method, string url, string? body, string? scenario = null)
