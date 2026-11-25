@@ -111,12 +111,20 @@ are independent of quantifiers. JSONPath supports bounded RFC 9535 selectors:
 `$.name`, `$['with.dot']`, `$["with.dot"]`, `$[0]`, `$[-1]`, `$[*]`, `$.*`,
 `$[0:6:2]`, `$[0,2]` and `$..name`. At most 256 characters and 16 segments;
 the product of selector counts across segments cannot exceed four. A maximum
-of one recursive descent is allowed; filter selectors are not supported.
+of one recursive descent is allowed. One filter (not in a selector union) is
+supported, for example `$.items[?@.active == true].value` or
+`$.items[?(@.price >= 10 && @.available) || @.override == true]`.
+Filters accept singular relative paths, scalar literals, the six comparison
+operators, existence, AND/OR/NOT and up to eight nested logical levels. Functions,
+root references, nested filters, non-singular predicate paths and filters
+combined with recursive descent are rejected.
 The request budget is charged before evaluation for body nodes multiplied by
 the union product; when descent is present, the charge also accounts for
-descendant traversal and every subsequent segment. Numeric range comparisons
-reject unsupported decimal precision rather
-than rounding. Condition depth is at most 12; rule count 4096; condition nodes
+descendant traversal and every subsequent segment. Filters conservatively
+charge for predicate length, body nodes and body bytes before evaluation;
+they also validate all numeric values in the inspected body once before the
+first filter, rejecting values that cannot be represented exactly as decimals.
+Numeric range comparisons reject unsupported decimal precision rather than rounding. Condition depth is at most 12; rule count 4096; condition nodes
 16384; body nodes 16384; weighted evaluation budget 65536; at most 64 regex
 evaluations per request. Body selector caching is bounded to twice the inspected
 body byte limit. Inspection is lazy; malformed JSON 400, oversized 413, unsupported

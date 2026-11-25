@@ -178,6 +178,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
         }
         JsonPath? jsonPath = null;
         var pathMultiplier = 1;
+        var hasFilter = false;
         if (source == "body")
         {
             // Parse RFC 9535 syntax with the pinned library, not a second approximate grammar.
@@ -193,8 +194,15 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 // Their subtrees are disjoint except for duplicates introduced by unions.
                 // Repeated descent could revisit overlapping subtrees; reject it.
                 if ((segment.IsRecursive && recursive) || segment.Selectors.Length == 0 ||
-                    segment.Selectors.Any(x => x is not (NameSelector or IndexSelector or WildcardSelector or SliceSelector)))
+                    segment.Selectors.Any(x => x is not (NameSelector or IndexSelector or WildcardSelector or SliceSelector or FilterSelector)))
                     throw Invalid("Unsupported or overly complex JSONPath selector.");
+                var filters = segment.Selectors.Count(x => x is FilterSelector);
+                if (filters != 0)
+                {
+                    if (hasFilter || filters != 1 || segment.Selectors.Length != 1)
+                        throw Invalid("Only one non-union JSONPath filter is supported.");
+                    hasFilter = true;
+                }
                 if (recursive)
                     recursiveSuffix++;
                 recursive |= segment.IsRecursive;
@@ -206,9 +214,19 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             // after descent, candidates at different depths can revisit nodes across stages.
             if (recursive)
                 pathMultiplier *= 2 + recursiveSuffix;
+            if (hasFilter)
+            {
+                if (recursive)
+                    throw Invalid("JSONPath filters cannot be combined with recursive descent.");
+                BoundedJsonPathFilter.Validate(key);
+                // With no descent or nested filter, each candidate subtree is disjoint
+                // except for the bounded union multiplicity. Charge a conservative
+                // upper bound on predicate operations per node and input byte.
+                pathMultiplier *= key.Length + 1;
+            }
         }
         return new Condition("leaf", [], source, key, op, hasValue ? operand.Clone() : default,
-            quantifier, ignoreCase, regex, jsonPath, hasValue ? 1 + operand.GetRawText().Length / 64 : 0, pathMultiplier);
+            quantifier, ignoreCase, regex, jsonPath, hasValue ? 1 + operand.GetRawText().Length / 64 : 0, pathMultiplier, hasFilter);
     }
 
     internal static decimal Number(JsonElement value)

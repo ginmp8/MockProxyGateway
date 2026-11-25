@@ -220,7 +220,13 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"header\",\"key\":\"x\",\"operator\":\"greaterThan\",\"value\":2}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.value\",\"operator\":\"in\",\"value\":[]}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$..items..value\",\"operator\":\"exists\"}")]
-    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.value == 1]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(@.name, 'x')]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.value == $.expected]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[*]]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?@.value]]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$..items[?@.value]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.value][?@.value]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.value == 1e1000]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$[0,1,2][0,1]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"header\",\"key\":\"x\",\"operator\":\"regex\",\"value\":\"(\"}")]
@@ -277,7 +283,23 @@ public sealed class GatewayTests
     [InlineData("$.items[::-1]", "{\"items\":[0,42]}", 201)]
     [InlineData("$..value", "{\"nested\":{\"items\":[{\"value\":42}]}}", 201)]
     [InlineData("$..value", "{\"nested\":{\"items\":[{\"other\":42}]}}", 404)]
-    public async Task RfcSelectorsSupportNamesIndicesWildcardsSlicesUnionsAndSingleDescent(string selector, string payload, int expected)
+    [InlineData("$.items[?@.active == true].value", "{\"items\":[{\"active\":true,\"value\":42}]}", 201)]
+    [InlineData("$.items[?@.active == true].value", "{\"items\":[{\"active\":\"true\",\"value\":42}]}", 404)]
+    [InlineData("$.items[?@.active == true].value", "{\"items\":[{\"active\":false,\"value\":42},{\"active\":true,\"value\":1}]}", 404)]
+    [InlineData("$.items[?@.score >= 10].value", "{\"items\":[{\"score\":12,\"value\":42}]}", 201)]
+    [InlineData("$.items[?@.score >= 10].value", "{\"items\":[{\"score\":9,\"value\":42}]}", 404)]
+    [InlineData("$.items[?@.score >= 10].value", "{\"items\":[{\"score\":\"12\",\"value\":42}]}", 404)]
+    [InlineData("$.items[?@.score == 0.1].value", "{\"items\":[{\"score\":0.1,\"value\":42}]}", 201)]
+    [InlineData("$.items[?@.score == 0.1].value", "{\"items\":[{\"score\":0.10000000000000000000000000001,\"value\":42}]}", 400)]
+    [InlineData("$.items[?@.score == 1].value", "{\"items\":[{\"score\":1e1000,\"value\":42}]}", 400)]
+    [InlineData("$.items[?@.flag].value", "{\"items\":[{\"flag\":null,\"value\":42}]}", 201)]
+    [InlineData("$.items[?@.flag].value", "{\"items\":[{\"value\":42}]}", 404)]
+    [InlineData("$.items[?!@.flag].value", "{\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?@['with.dot'] == 'yes'].value", "{\"items\":[{\"with.dot\":\"yes\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?(@.active == true && @.score >= 10) || @.override == true].value", "{\"items\":[{\"active\":true,\"score\":1,\"override\":true,\"value\":42}]}", 201)]
+    [InlineData("$.items[?(@.active == true && @.score >= 10) || @.override == true].value", "{\"items\":[{\"active\":true,\"score\":1,\"override\":false,\"value\":42}]}", 404)]
+    [InlineData("$.items[?@.score == @.target].value", "{\"items\":[{\"score\":12,\"target\":12,\"value\":42}]}", 201)]
+    public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """
             {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
@@ -289,6 +311,22 @@ public sealed class GatewayTests
         using var content = new StringContent(payload, Encoding.UTF8, "application/json");
         using var response = await fixture.Client.PostAsync("/mock-proxy/test/check", content, TestContext.Current.CancellationToken);
         Assert.Equal((HttpStatusCode)expected, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task JsonPathFilterWorkIsChargedBeforeAnyAction()
+    {
+        const string rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
+              {"id":"filter","priority":1,"conditions":{"source":"body","key":"$.items[?@.active == true].value","operator":"equals","value":42},
+               "action":{"mode":"mock","response":{"statusCode":201}}}
+            ],"default":{"mode":"mock","response":{"statusCode":404}}}}}
+            """;
+        await using var fixture = await Fixture.StartAsync(rules);
+        var json = "{\"items\":[" + string.Join(',', Enumerable.Repeat("{\"active\":true,\"value\":42}", 2000)) + "]}";
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+        using var response = await fixture.Client.PostAsync("/mock-proxy/test/check", content, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]

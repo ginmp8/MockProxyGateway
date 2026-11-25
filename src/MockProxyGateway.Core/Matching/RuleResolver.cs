@@ -22,6 +22,8 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
     private bool _bodyLoaded;
     private int _budget = 65536;
     private int _bodyNodes;
+    private int _bodyByteLength;
+    private bool _filterNumbersValidated;
     private long _selectionBytes;
     private int _regexRemaining = 64;
     private readonly Dictionary<string, JsonElement[]> _bodySelections = new(StringComparer.Ordinal);
@@ -125,7 +127,16 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                 await LoadBodyAsync().ConfigureAwait(false);
                 if (_bodySelections.TryGetValue(condition.Key!, out var cached))
                     return cached;
-                Charge(_bodyNodes * condition.JsonPathWorkMultiplier);
+                Charge(_bodyNodes * (long)condition.JsonPathWorkMultiplier);
+                if (condition.HasJsonPathFilter)
+                {
+                    Charge((_bodyByteLength / 64L + 1) * condition.JsonPathWorkMultiplier);
+                    if (!_filterNumbersValidated)
+                    {
+                        ValidateFilterNumbers(_body);
+                        _filterNumbersValidated = true;
+                    }
+                }
                 var matches = condition.JsonPath!.Evaluate(_body).Matches;
                 var results = new List<JsonElement>();
                 foreach (var match in matches)
@@ -200,6 +211,7 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                 if (buffer.Length > options.MaxBodySizeBytes)
                     throw new RequestFailure(413, "body-size");
             }
+            _bodyByteLength = (int)buffer.Length;
             _body = JsonNode.Parse(buffer.ToArray(), documentOptions: new JsonDocumentOptions { MaxDepth = 64 });
             // Materialize once to validate duplicate keys and bound node count before JSONPath evaluation.
             VisitBody(_body);
@@ -231,12 +243,35 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
         }
     }
 
-    private void Charge(int count)
+    private void ValidateFilterNumbers(JsonNode? node)
     {
         context.RequestAborted.ThrowIfCancellationRequested();
-        _budget -= count;
-        if (_budget < 0)
+        // The pinned JsonPath.Net comparison operators read decimals from JsonElement.
+        // Reject unrepresentable or rounded values before any predicate is evaluated.
+        if (node is JsonValue value && value.TryGetValue<JsonElement>(out var element) &&
+            element.ValueKind == JsonValueKind.Number)
+        {
+            try { _ = RuleCompiler.Number(element); }
+            catch (InvalidOperationException) { throw new RequestFailure(400, "body-number"); }
+        }
+        else if (node is JsonObject obj)
+        {
+            foreach (var property in obj)
+                ValidateFilterNumbers(property.Value);
+        }
+        else if (node is JsonArray array)
+        {
+            foreach (var item in array)
+                ValidateFilterNumbers(item);
+        }
+    }
+
+    private void Charge(long count)
+    {
+        context.RequestAborted.ThrowIfCancellationRequested();
+        if (count > _budget)
             throw new RequestFailure(400, "evaluation-budget");
+        _budget -= (int)count;
     }
 
     private bool Compare(Condition condition, JsonElement actual)
