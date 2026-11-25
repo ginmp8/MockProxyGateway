@@ -179,6 +179,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
         JsonPath? jsonPath = null;
         var pathMultiplier = 1;
         var hasFilter = false;
+        var hasRootReference = false;
         if (source == "body")
         {
             // Parse RFC 9535 syntax with the pinned library, not a second approximate grammar.
@@ -218,7 +219,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             {
                 if (recursive)
                     throw Invalid("JSONPath filters cannot be combined with recursive descent.");
-                var normalized = BoundedJsonPathFilter.Normalize(key);
+                var normalized = BoundedJsonPathFilter.Normalize(key, out hasRootReference);
                 if (!JsonPath.TryParse(normalized, out jsonPath))
                     throw Invalid("Invalid bounded JSONPath filter.");
                 // With no descent or nested filter, each candidate subtree is disjoint
@@ -228,7 +229,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             }
         }
         return new Condition("leaf", [], source, key, op, hasValue ? operand.Clone() : default,
-            quantifier, ignoreCase, regex, jsonPath, hasValue ? 1 + operand.GetRawText().Length / 64 : 0, pathMultiplier, hasFilter);
+            quantifier, ignoreCase, regex, jsonPath, hasValue ? 1 + operand.GetRawText().Length / 64 : 0, pathMultiplier, hasFilter, hasRootReference);
     }
 
     internal static decimal Number(JsonElement value)

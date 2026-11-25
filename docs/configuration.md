@@ -114,15 +114,22 @@ the product of selector counts across segments cannot exceed four. A maximum
 of one recursive descent is allowed. One filter (not in a selector union) is
 supported, for example `$.items[?@.active == true].value` or
 `$.items[?(@.price >= 10 && @.available) || @.override == true]`.
-Filters accept singular relative paths, scalar literals, the six comparison
-operators, existence, AND/OR/NOT and up to eight nested logical levels. Negated
-terms are explicitly grouped before library evaluation to preserve NOT precedence. Functions,
-root references, nested filters, non-singular predicate paths and filters
-combined with recursive descent are rejected.
+Filters accept singular relative and root paths, scalar literals, the six comparison
+operators, existence (including relative wildcard paths), AND/OR/NOT and up to eight
+nested logical levels. `count(@.items[*])` and `value(@.items[*])` accept bounded
+relative queries with name, index or wildcard segments; comparisons still require
+singular queries or value-returning functions. Negated terms are explicitly grouped
+before library evaluation to preserve NOT precedence. Nested filters, predicate
+unions/slices/descent, non-singular root references, other functions and filters
+combined with recursive descent are rejected. The pinned JsonPath.Net 3.0.2
+`length()` counts text elements instead of Unicode scalar values for strings;
+it is not admitted until RFC-correct behavior can be provided.
 The request budget is charged before evaluation for body nodes multiplied by
 the union product; when descent is present, the charge also accounts for
 descendant traversal and every subsequent segment. Filters conservatively
 charge for predicate length, body nodes and body bytes before evaluation;
+root references additionally charge a worst-case repeated root traversal and
+comparison for every possible candidate;
 they also validate all numeric values in the inspected body once before the
 first filter, rejecting values that cannot be represented exactly as decimals.
 Numeric range comparisons reject unsupported decimal precision rather than rounding. Condition depth is at most 12; rule count 4096; condition nodes

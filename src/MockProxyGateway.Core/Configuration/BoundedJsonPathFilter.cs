@@ -8,8 +8,9 @@ namespace MockProxyGateway.Configuration;
 // It examines the original expression, not a potentially lossy AST rendering.
 internal static class BoundedJsonPathFilter
 {
-    internal static string Normalize(string path)
+    internal static string Normalize(string path, out bool usesRoot)
     {
+        usesRoot = false;
         var index = 0;
         var grouping = new List<(int Offset, char Character)>();
         while (index < path.Length)
@@ -21,7 +22,7 @@ internal static class BoundedJsonPathFilter
             }
             if (path[index++] == '[' && Take(path, ref index, "?"))
             {
-                ReadExpression(path, ref index, 0, grouping);
+                ReadExpression(path, ref index, 0, grouping, ref usesRoot);
                 Require(path, ref index, "]");
                 if (grouping.Count == 0)
                     return path;
@@ -34,14 +35,14 @@ internal static class BoundedJsonPathFilter
         throw Invalid();
     }
 
-    private static void ReadExpression(string path, ref int index, int depth, List<(int Offset, char Character)> grouping)
+    private static void ReadExpression(string path, ref int index, int depth, List<(int Offset, char Character)> grouping, ref bool usesRoot)
     {
-        ReadTerm(path, ref index, depth, grouping);
+        ReadTerm(path, ref index, depth, grouping, ref usesRoot);
         while (Take(path, ref index, "&&") || Take(path, ref index, "||"))
-            ReadTerm(path, ref index, depth, grouping);
+            ReadTerm(path, ref index, depth, grouping, ref usesRoot);
     }
 
-    private static void ReadTerm(string path, ref int index, int depth, List<(int Offset, char Character)> grouping)
+    private static void ReadTerm(string path, ref int index, int depth, List<(int Offset, char Character)> grouping, ref bool usesRoot)
     {
         if (depth > 8)
             throw Invalid();
@@ -49,7 +50,7 @@ internal static class BoundedJsonPathFilter
         var termStart = index;
         if (Take(path, ref index, "!"))
         {
-            ReadTerm(path, ref index, depth + 1, grouping);
+            ReadTerm(path, ref index, depth + 1, grouping, ref usesRoot);
             // The pinned unary parser consumes a complete logical expression.
             // Explicitly group the negated term to preserve RFC NOT precedence.
             grouping.Add((termStart, '('));
@@ -58,39 +59,55 @@ internal static class BoundedJsonPathFilter
         }
         if (Take(path, ref index, "("))
         {
-            ReadExpression(path, ref index, depth + 1, grouping);
+            ReadExpression(path, ref index, depth + 1, grouping, ref usesRoot);
             Require(path, ref index, ")");
             return;
         }
 
-        var relative = ReadOperand(path, ref index);
+        var left = ReadOperand(path, ref index, ref usesRoot);
         if (Take(path, ref index, "==") || Take(path, ref index, "!=") ||
             Take(path, ref index, "<=") || Take(path, ref index, ">=") ||
             Take(path, ref index, "<") || Take(path, ref index, ">"))
-            ReadOperand(path, ref index);
-        else if (!relative)
+        {
+            var right = ReadOperand(path, ref index, ref usesRoot);
+            if (!left.Comparable || !right.Comparable)
+                throw Invalid();
+        }
+        else if (!left.Query)
             throw Invalid();
     }
 
-    // True for a singular relative query; false for a scalar literal.
-    private static bool ReadOperand(string path, ref int index)
+    // A query may be tested for existence; comparisons require a singular
+    // query or a value. The pinned parser still validates full RFC syntax.
+    private static (bool Query, bool Comparable) ReadOperand(string path, ref int index, ref bool usesRoot)
     {
         SkipWhitespace(path, ref index);
         if (index >= path.Length)
             throw Invalid();
-        if (path[index] == '@')
+        if (path[index] is '@' or '$')
         {
-            index++;
-            ReadRelativeSegments(path, ref index);
-            return true;
+            var root = path[index++] == '$';
+            usesRoot |= root;
+            var singular = ReadSegments(path, ref index, allowWildcard: !root);
+            return (true, singular);
         }
-        if (path[index] is '\'' or '"')
+        // These built-ins have bounded work on a relative nodelist without
+        // recursion or unions. Do not admit dynamic/regex or custom functions.
+        if (Take(path, ref index, "count") || Take(path, ref index, "value"))
+        {
+            Require(path, ref index, "(");
+            Require(path, ref index, "@");
+            ReadSegments(path, ref index, allowWildcard: true);
+            Require(path, ref index, ")");
+            return (false, true);
+        }
+        if (index < path.Length && path[index] is '\'' or '"')
         {
             ReadQuoted(path, ref index);
-            return false;
+            return (false, true);
         }
         if (Take(path, ref index, "true") || Take(path, ref index, "false") || Take(path, ref index, "null"))
-            return false;
+            return (false, true);
 
         var start = index;
         while (index < path.Length && (char.IsAsciiDigit(path[index]) || path[index] is '-' or '+' or '.' or 'e' or 'E'))
@@ -99,16 +116,23 @@ internal static class BoundedJsonPathFilter
             throw Invalid();
         using var number = JsonDocument.Parse(path[start..index]);
         _ = RuleCompiler.Number(number.RootElement);
-        return false;
+        return (false, true);
     }
 
-    private static void ReadRelativeSegments(string path, ref int index)
+    private static bool ReadSegments(string path, ref int index, bool allowWildcard)
     {
+        var singular = true;
         while (index < path.Length)
         {
             if (path[index] == '.')
             {
                 index++;
+                if (allowWildcard && index < path.Length && path[index] == '*')
+                {
+                    singular = false;
+                    index++;
+                    continue;
+                }
                 var start = index;
                 while (index < path.Length && (char.IsAsciiLetterOrDigit(path[index]) || path[index] == '_' || path[index] >= 128))
                     index++;
@@ -119,7 +143,9 @@ internal static class BoundedJsonPathFilter
             {
                 index++;
                 SkipWhitespace(path, ref index);
-                if (index < path.Length && path[index] is '\'' or '"')
+                if (allowWildcard && Take(path, ref index, "*"))
+                    singular = false;
+                else if (index < path.Length && path[index] is '\'' or '"')
                     ReadQuoted(path, ref index);
                 else
                 {
@@ -136,6 +162,7 @@ internal static class BoundedJsonPathFilter
             else
                 break;
         }
+        return singular;
     }
 
     private static void ReadQuoted(string path, ref int index)

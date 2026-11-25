@@ -131,6 +131,10 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                 if (condition.HasJsonPathFilter)
                 {
                     Charge((_bodyByteLength / 64L + 1) * condition.JsonPathWorkMultiplier);
+                    // Root queries can revisit the same subtree for every filter candidate.
+                    // Charge the worst-case repeated root traversal and comparison before evaluation.
+                    if (condition.HasJsonPathRootReference)
+                        Charge((long)_bodyNodes * (_bodyNodes + _bodyByteLength / 64L + 1) * condition.JsonPathWorkMultiplier);
                     if (!_filterNumbersValidated)
                     {
                         ValidateFilterNumbers(_body);
