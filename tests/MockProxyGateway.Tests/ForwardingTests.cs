@@ -32,7 +32,8 @@ public sealed class ForwardingTests
         var destinations = json["destinations"]!.AsObject();
         foreach (var item in destinations)
             item.Value!["baseUrl"] = upstream.BaseUrl + item.Key + "/";
-        await using var gateway = await StartGatewayAsync(json, upstream);
+        using var capture = new CaptureProvider();
+        await using var gateway = await StartGatewayAsync(json, upstream, capture: capture);
         using var client = gateway.GetTestClient();
 
         // All inputs are synthetic. Each assertion checks actual outgoing call counts.
@@ -48,7 +49,7 @@ public sealed class ForwardingTests
         await CheckAsync("POST", "/compliance/analysis?simulate=success", 200, session: "session-a", expectedBody: "composite");
         await CheckAsync("POST", "/compliance/analysis", 200, body: """{"products":[{"type":"TestProduct"}]}""", expectedBody: "array");
         await CheckAsync("POST", "/compliance/analysis", 200, cookie: "test-session=session-b", expectedBody: "cookie");
-        await CheckAsync("POST", "/compliance/analysis?simulate=unavailable", 503, "success");
+        await CheckAsync("POST", "/compliance/analysis?simulate=unavailable", 503, "success", expectedBody: "Service unavailable");
         await CheckAsync("POST", "/compliance/analysis", 201, "disabled", expectedUpstream: "/compliance-real/analysis");
         await CheckAsync("POST", "/compliance/analysis", 201, "expired", expectedUpstream: "/compliance-real/analysis");
         await CheckAsync("GET", "/compliance/analysis/analysis-test-1001", 200, expectedBody: "Pending");
@@ -60,13 +61,18 @@ public sealed class ForwardingTests
 
         var countBefore = upstream.Requests.Count;
         using (var success = await client.GetAsync("/api/health", ct))
+        {
+            Assert.Equal(HttpStatusCode.OK, success.StatusCode);
             Assert.Equal("normal", await success.Content.ReadAsStringAsync(ct));
+        }
         Assert.Equal(countBefore, upstream.Requests.Count);
 
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cancel.CancelAfter(TimeSpan.FromMilliseconds(150));
+        cancel.CancelAfter(TimeSpan.FromSeconds(2));
         using var delayed = CreateRequest("POST", "/mock-proxy/compliance/analysis", Body, "timeout");
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.SendAsync(delayed, cancel.Token));
+        // A cancellation before middleware entry would not establish the scenario.
+        await WaitForGatewayLogAsync(capture, "rule=timeout-by-header action=mock", "category=cancelled", ct);
         Assert.Equal(countBefore, upstream.Requests.Count);
 
         using var malformed = CreateRequest("POST", "/mock-proxy/compliance/analysis", "{");
@@ -193,8 +199,9 @@ public sealed class ForwardingTests
         foreach (var destination in sample["destinations"]!.AsObject())
             destination.Value!["baseUrl"] = upstream.BaseUrl + destination.Key + "/";
         var published = sample.ToJsonString();
+        using var capture = new CaptureProvider();
         await using var gateway = await StartGatewayAsync(sample, upstream,
-            provider: () => System.Text.Json.JsonElement.Parse(Volatile.Read(ref published)));
+            provider: () => System.Text.Json.JsonElement.Parse(Volatile.Read(ref published)), capture: capture);
         using var client = gateway.GetTestClient();
         var endpointRules = sample["services"]!["compliance"]!["endpoints"]![0]!["rules"]!.AsArray();
         JsonNode Rule(string id) => endpointRules.Single(x => (string?)x!["id"] == id)!;
@@ -208,23 +215,40 @@ public sealed class ForwardingTests
             using var response = await client.SendAsync(request, ct);
             Assert.Equal(isRejected ? HttpStatusCode.UnprocessableEntity : HttpStatusCode.OK, response.StatusCode);
             Assert.Contains(isRejected ? "Rejected" : "Approved", await response.Content.ReadAsStringAsync(ct), StringComparison.Ordinal);
+            Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
         });
         await Task.WhenAll(independent);
         Assert.Empty(upstream.Requests);
 
         sample["services"]!["compliance"]!["rules"]![0]!["enabled"] = true;
         Volatile.Write(ref published, sample.ToJsonString());
-        await EventuallyAsync("GET", "/mock-proxy/compliance/other", "service-unavailable", 503);
+        await WaitForGatewayLogAsync(capture, "Gateway configuration version 2 activated.", "", ct);
         var count = upstream.Requests.Count;
         using (var maintenance = CreateRequest("GET", "/mock-proxy/compliance/other", null, "service-unavailable"))
         using (var response = await client.SendAsync(maintenance, ct))
+        {
             Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+            Assert.Contains("Service unavailable", await response.Content.ReadAsStringAsync(ct), StringComparison.Ordinal);
+        }
         Assert.Equal(count, upstream.Requests.Count);
 
         Rule("rejected-by-body")["priority"] = 400;
         Volatile.Write(ref published, sample.ToJsonString());
-        await EventuallyAsync("POST", "/mock-proxy/compliance/analysis", "success", 500, """{"customer":{"riskScore":90}}""");
+        await WaitForGatewayLogAsync(capture, "Gateway configuration version 3 activated.", "", ct);
+        using (var conflict = CreateRequest("POST", "/mock-proxy/compliance/analysis",
+            """{"customer":{"riskScore":90}}""", "success"))
+        using (var response = await client.SendAsync(conflict, ct))
+        {
+            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+            Assert.Equal("", await response.Content.ReadAsStringAsync(ct));
+        }
         Assert.Equal(count, upstream.Requests.Count);
+        await WaitForGatewayLogAsync(capture, "Gateway rule conflict service=compliance", "configuration=3", ct);
+        Assert.Contains(capture.Messages, x => x.Message.Contains("Gateway rule conflict service=compliance", StringComparison.Ordinal) &&
+            x.Message.Contains("rejected-by-body", StringComparison.Ordinal) &&
+            x.Message.Contains("success-by-header", StringComparison.Ordinal) &&
+            x.Message.Contains("configuration=3", StringComparison.Ordinal));
 
         Rule("rejected-by-body")["priority"] = 600;
         Rule("success-by-header")["enabled"] = false;
@@ -232,36 +256,58 @@ public sealed class ForwardingTests
         sample["services"]!["no-default"] = new JsonObject();
         sample["services"]!["disabled-service"] = new JsonObject { ["enabled"] = false };
         Volatile.Write(ref published, sample.ToJsonString());
-        await EventuallyAsync("POST", "/mock-proxy/compliance/analysis", "success", 201, Body);
+        await WaitForGatewayLogAsync(capture, "Gateway configuration version 4 activated.", "", ct);
+
+        // Wait for publication without sending probe requests that mutate the call count.
+        // A fresh request must select the correct fallback, not merely return status 201.
+        await CheckForwardedAsync("POST", "/mock-proxy/compliance/analysis", Body, "success", "/compliance-real/analysis");
+        await CheckForwardedAsync("GET", "/mock-proxy/compliance/other", null, "service-unavailable", "/compliance-real/other");
+
         var restored = upstream.Requests.Count;
-        await EventuallyAsync("GET", "/mock-proxy/compliance/other", "service-unavailable", 201);
-        Assert.Equal(restored + 1, upstream.Requests.Count);
         using (var absent = await client.GetAsync("/mock-proxy/no-default/check", ct))
+        {
             Assert.Equal(HttpStatusCode.NotFound, absent.StatusCode);
+            Assert.Equal("", await absent.Content.ReadAsStringAsync(ct));
+        }
         using (var disabled = await client.GetAsync("/mock-proxy/disabled-service/check", ct))
+        {
             Assert.Equal(HttpStatusCode.NotFound, disabled.StatusCode);
-        Assert.Equal(restored + 1, upstream.Requests.Count);
+            Assert.Equal("", await disabled.Content.ReadAsStringAsync(ct));
+        }
+        Assert.Equal(restored, upstream.Requests.Count);
 
         Volatile.Write(ref published, "{");
-        await Task.Delay(1300, ct);
-        using var lastGood = CreateRequest("POST", "/mock-proxy/compliance/analysis", Body, "success");
-        using var forwarded = await client.SendAsync(lastGood, ct);
-        Assert.Equal(HttpStatusCode.Created, forwarded.StatusCode);
-        Assert.Equal(restored + 2, upstream.Requests.Count);
+        await WaitForGatewayLogAsync(capture, "Gateway configuration reload rejected; retaining version 4.", "", ct);
+        await CheckForwardedAsync("POST", "/mock-proxy/compliance/analysis", Body, "success", "/compliance-real/analysis");
 
-        async Task EventuallyAsync(string method, string path, string scenario, int status, string? body = null)
+        async Task CheckForwardedAsync(string method, string path, string? body, string scenario, string destination)
         {
-            var deadline = DateTime.UtcNow.AddSeconds(10);
-            while (DateTime.UtcNow < deadline)
-            {
-                using var request = CreateRequest(method, path, body, scenario);
-                using var response = await client.SendAsync(request, ct);
-                if ((int)response.StatusCode == status)
-                    return;
-                await Task.Delay(100, ct);
-            }
-            Assert.Fail("A validated configuration update did not become active.");
+            var before = upstream.Requests.Count;
+            using var request = CreateRequest(method, path, body, scenario);
+            using var response = await client.SendAsync(request, ct);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            Assert.Equal("upstream", await response.Content.ReadAsStringAsync(ct));
+            Assert.Equal("from-upstream", response.Headers.GetValues("X-Upstream").Single());
+            Assert.Equal(before + 1, upstream.Requests.Count);
+            var actual = upstream.Requests.Last();
+            Assert.Equal(destination, actual.Target);
+            Assert.Equal(method, actual.Method);
+            Assert.Equal(body ?? "", actual.Body);
         }
+    }
+
+    private static async Task WaitForGatewayLogAsync(CaptureProvider capture, string required, string additional, CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (capture.Messages.Any(x => x.Category.StartsWith("MockProxyGateway.", StringComparison.Ordinal) &&
+                x.Message.Contains(required, StringComparison.Ordinal) &&
+                x.Message.Contains(additional, StringComparison.Ordinal)))
+                return;
+            await Task.Delay(100, ct);
+        }
+        Assert.Fail("Expected gateway diagnostic was not observed: " + required + " " + additional);
     }
 
     [Fact]

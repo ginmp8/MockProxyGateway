@@ -45,7 +45,7 @@ map, not a declaration that an unexecuted candidate passed.
 | --- | --- |
 | Default, success, rejection, unavailable, rate limit, unauthorized, pending, alternate, real override, compound, array, cookie, overlap, disabled, expired, route parameter, endpoint default, catch-all, fallback, second service, unknown service, normal route, timeout cancellation | ForwardingTests.PinnedExampleSelectsMockOrRealActionWithCorrectOutboundCount |
 | Compound OR / NOT negative boundary | ForwardingTests.CombinedScenarioNegationAndAlternateBodyBranchDoNotLeakAcrossRequests |
-| Equal priority, concurrent sessions, maintenance enable/disable, no-default and disabled service, hot toggle, invalid reload | ForwardingTests.ConcurrentRequestsAndHotRuleChangesRemainIsolated |
+| Equal priority, concurrent sessions, maintenance enable/disable, no-default and disabled service, hot toggle, invalid reload | ForwardingTests.ConcurrentRequestsAndHotRuleChangesRemainIsolated: observed snapshot activation followed by fresh HTTP status, body, headers, destination and outbound-count assertions; conflict IDs and last-known-good rejection diagnostic |
 | Added and removed rules, concurrent readers, in-flight pin, source-equivalent reload | ConfigurationTests.AddingAndRemovingRulesKeepsConcurrentReadersOnWholeSnapshots, InFlightRequestRetainsOriginalSnapshotAcrossReload, SelectedSourcesReloadValidUpdatesAndRetainLastGood |
 | Exact expiry boundary | ConfigurationTests.ExpiryUsesHostTimeProviderAtTheExactBoundaryWithoutReload |
 | Successful short delay / cancellation of long configured delay | GatewayTests.DelayedMockReturnsConfiguredBodyAfterDelay; pinned example cancellation |
@@ -56,13 +56,13 @@ map, not a declaration that an unexecuted candidate passed.
 | Criterion | Primary source/test/gate |
 | --- | --- |
 | AC-01 | Solution/central props/lockfiles; CI restore/build/pack and inspect-package.py |
-| AC-02 | scripts/package-smoke.sh: clean package-only host; default/custom prefix, segment boundary, unrelated routes, mock and proxy |
+| AC-02 | scripts/package-smoke.sh: clean package-only host, omitted Prefix + parameterless registration, explicit custom middleware argument overriding configured prefix, segment boundary, unrelated routes, mock and proxy |
 | AC-03 | src/MockProxyGateway.Host/Program.cs; ForwardingTests.StandaloneCompositionUsesCoreThroughWebApplicationFactory; Docker smoke |
 | AC-04 | Scenario coverage table above; pinned baseline and actual outbound counts |
 | AC-05 | GatewayTests.ExactMethodAndRouteSpecificityOverrideWildcardAndServiceDefault; pinned example and maintenance/no-default cases |
 | AC-06 | ForwardingTests.ConcurrentRequestsAndHotRuleChangesRemainIsolated; controlled expiry; conflict diagnostics |
-| AC-07 | GatewayTests.TypedOperatorBehavior, MultiValueQueryQuantifiers, RfcChildSelectorsSupportQuotedNamesNegativeIndexAndObjectWildcard, MethodPathAndContentTypeConditionsRespectCaseAndShortCircuit, SourceNameCasingAndRepeatedValueQuantifiers, JsonPropertyNamesAreCaseSensitive; typed source tests and scenario matrix |
-| AC-08 | GatewayTests.InvalidConditionFailsActivation, ExcessiveBodyNodesFailClosed, RegexEvaluationBudgetRejectsExcessiveFanoutWithoutDefaultAction; RegexBoundaryTests.ActualEngineTimeoutIsClassifiedAsInspectionFailure |
+| AC-07 | GatewayTests.TypedOperatorBehavior, PresenceOperatorsDistinguishMissingNullAndPresentValue, BodyResultQuantifiersRequireNonemptyResultsAndCorrectMatches, TextComparisonIsOrdinalUnlessExplicitlyIgnoringCase, MultiValueQueryQuantifiers, RfcChildSelectorsSupportQuotedNamesNegativeIndexAndObjectWildcard, MethodPathAndContentTypeConditionsRespectCaseAndShortCircuit, SourceNameCasingAndRepeatedValueQuantifiers, JsonPropertyNamesAreCaseSensitive; typed source tests and scenario matrix |
+| AC-08 | GatewayTests.TypedOperatorBehavior (present equal/unequal operands and missing values), PresenceOperatorsDistinguishMissingNullAndPresentValue, InvalidConditionFailsActivation, ExcessiveConditionDepthFailsActivation, UnsupportedNumericPrecisionIsAnInspectionErrorNotAFalseMatch, ExcessiveBodyNodesFailClosed, RegexEvaluationBudgetRejectsExcessiveFanoutWithoutDefaultAction; RegexBoundaryTests.ActualEngineTimeoutIsClassifiedAsInspectionFailure |
 | AC-09 | ForwardingTests.PinnedExampleSelectsMockOrRealActionWithCorrectOutboundCount, RawPathAndRemainingQueryEncodingReachRealUpstreamUnchanged, NonInspectedBinaryBodyStreamsBeforeClientFinishesSending, InspectedJsonPreservesExactBytesAndBusinessHeadersAtRealUpstream, CredentialPolicyIsPerDestinationAndRedirectIsNotFollowed |
 | AC-10 | Pinned mock scenario tests, GatewayTests.HeadAndEmptyStatusesDoNotWriteResponseBodies, DelayedMockReturnsConfiguredBodyAfterDelay; ConfigurationTests.FileFixtureIsReadOnlyFromTrustedRoot |
 | AC-11 | ConfigurationTests.SelectedSourcesReloadValidUpdatesAndRetainLastGood, InFlightRequestRetainsOriginalSnapshotAcrossReload, AddingAndRemovingRulesKeepsConcurrentReadersOnWholeSnapshots, ExpiryUsesHostTimeProviderAtTheExactBoundaryWithoutReload |

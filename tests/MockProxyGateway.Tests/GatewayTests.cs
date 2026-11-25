@@ -143,19 +143,49 @@ public sealed class GatewayTests
     [InlineData("lessThanOrEqual", "5", "{\"value\":5}", true)]
     [InlineData("between", "[4,6]", "{\"value\":5}", true)]
     [InlineData("jsonEquals", "{\"b\":2,\"a\":1}", "{\"value\":{\"a\":1,\"b\":2}}", true)]
+    [InlineData("notEquals", "\"a\"", "{\"value\":\"b\"}", true)]
+    [InlineData("notEquals", "\"a\"", "{\"value\":\"a\"}", false)]
+    [InlineData("equals", "null", "{\"value\":null}", true)]
+    [InlineData("equals", "null", "{}", false)]
+    [InlineData("equals", "null", "{\"value\":\"null\"}", false)]
+    [InlineData("equals", "true", "{\"value\":true}", true)]
+    [InlineData("equals", "true", "{\"value\":\"true\"}", false)]
+    [InlineData("notEquals", "null", "{\"value\":null}", false)]
+    [InlineData("notEquals", "null", "{\"value\":false}", true)]
+    [InlineData("notEquals", "null", "{}", false)]
+    [InlineData("contains", "\"bc\"", "{\"value\":\"ad\"}", false)]
+    [InlineData("startsWith", "\"ab\"", "{\"value\":\"zab\"}", false)]
+    [InlineData("endsWith", "\"cd\"", "{\"value\":\"cdz\"}", false)]
+    [InlineData("in", "[1,2]", "{\"value\":\"2\"}", false)]
+    [InlineData("notIn", "[1,2]", "{\"value\":2}", false)]
+    [InlineData("notIn", "[1,2]", "{}", false)]
+    [InlineData("regex", "\"^a[0-9]+$\"", "{\"value\":\"a42z\"}", false)]
+    [InlineData("greaterThan", "5", "{\"value\":5}", false)]
+    [InlineData("greaterThanOrEqual", "5", "{\"value\":4}", false)]
+    [InlineData("lessThan", "5", "{\"value\":5}", false)]
+    [InlineData("lessThanOrEqual", "5", "{\"value\":6}", false)]
+    [InlineData("between", "[4,6]", "{\"value\":4}", true)]
+    [InlineData("between", "[4,6]", "{\"value\":6}", true)]
+    [InlineData("between", "[4,6]", "{\"value\":7}", false)]
+    [InlineData("between", "[4,6]", "{\"value\":3}", false)]
+    [InlineData("jsonEquals", "{\"b\":2,\"a\":1}", "{\"value\":{\"a\":1,\"b\":3}}", false)]
+    [InlineData("jsonEquals", "[1,false,null]", "{\"value\":[1,false,null]}", true)]
+    [InlineData("jsonEquals", "[1,false,null]", "{\"value\":[false,1,null]}", false)]
     public async Task TypedOperatorBehavior(string operation, string operand, string body, bool matches)
     {
         var rules = """
             {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
               {"id":"operator","priority":1,
                "conditions":{"source":"body","key":"$.value","operator":"OPERATOR","value":OPERAND},
-               "action":{"mode":"mock","response":{"statusCode":201}}}
-            ],"default":{"mode":"mock","response":{"statusCode":404}}}}}
+               "action":{"mode":"mock","response":{"statusCode":201,"text":"operator-match"}}}
+            ],"default":{"mode":"mock","response":{"statusCode":404,"text":"operator-miss"}}}}}
             """.Replace("OPERATOR", operation, StringComparison.Ordinal).Replace("OPERAND", operand, StringComparison.Ordinal);
         await using var fixture = await Fixture.StartAsync(rules);
         using var content = new StringContent(body, Encoding.UTF8, "application/json");
         using var response = await fixture.Client.PostAsync("/mock-proxy/test/check", content, TestContext.Current.CancellationToken);
         Assert.Equal(matches ? HttpStatusCode.Created : HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(matches ? "operator-match" : "operator-miss",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -395,6 +425,114 @@ public sealed class GatewayTests
         using var content = new StringContent(json, Encoding.UTF8, "application/json");
         using var response = await fixture.Client.PostAsync("/mock-proxy/test/check", content, TestContext.Current.CancellationToken);
         Assert.Equal((HttpStatusCode)expected, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("exists", "{}", false)]
+    [InlineData("exists", "{\"value\":null}", true)]
+    [InlineData("exists", "{\"value\":false}", true)]
+    [InlineData("notExists", "{}", true)]
+    [InlineData("notExists", "{\"value\":null}", false)]
+    [InlineData("notExists", "{\"value\":false}", false)]
+    [InlineData("isNull", "{}", false)]
+    [InlineData("isNull", "{\"value\":null}", true)]
+    [InlineData("isNull", "{\"value\":false}", false)]
+    public async Task PresenceOperatorsDistinguishMissingNullAndPresentValue(string operation, string body, bool matches)
+    {
+        // Each request evaluates exactly one leaf; no earlier all/any branch can hide it.
+        var rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
+              {"id":"presence","priority":1,
+               "conditions":{"source":"body","key":"$.value","operator":"OPERATOR"},
+               "action":{"mode":"mock","response":{"statusCode":201,"text":"presence-match"}}}
+            ],"default":{"mode":"mock","response":{"statusCode":404,"text":"presence-miss"}}}}}
+            """.Replace("OPERATOR", operation, StringComparison.Ordinal);
+        await using var fixture = await Fixture.StartAsync(rules);
+        var ct = TestContext.Current.CancellationToken;
+        using var content = new StringContent(body, Encoding.UTF8, "application/json");
+        using var response = await fixture.Client.PostAsync("/mock-proxy/test/check", content, ct);
+        Assert.Equal(matches ? HttpStatusCode.Created : HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(matches ? "presence-match" : "presence-miss", await response.Content.ReadAsStringAsync(ct));
+    }
+
+    [Theory]
+    [InlineData("any", "{\"values\":[1,2]}", true)]
+    [InlineData("any", "{\"values\":[2,3]}", false)]
+    [InlineData("all", "{\"values\":[1,1]}", true)]
+    [InlineData("all", "{\"values\":[1,2]}", false)]
+    [InlineData("none", "{\"values\":[2,3]}", true)]
+    [InlineData("none", "{\"values\":[1,2]}", false)]
+    [InlineData("any", "{}", false)]
+    [InlineData("all", "{}", false)]
+    [InlineData("none", "{}", false)]
+    [InlineData("none", "{\"values\":[]}", false)]
+    public async Task BodyResultQuantifiersRequireNonemptyResultsAndCorrectMatches(string quantifier, string body, bool matches)
+    {
+        var rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
+              {"id":"quantifier","priority":1,"conditions":{"source":"body","key":"$.values[*]","operator":"equals","value":1,"quantifier":"QUANTIFIER"},
+               "action":{"mode":"mock","response":{"statusCode":201,"text":"quantifier-match"}}}
+            ],"default":{"mode":"mock","response":{"statusCode":404,"text":"quantifier-miss"}}}}}
+            """.Replace("QUANTIFIER", quantifier, StringComparison.Ordinal);
+        await using var fixture = await Fixture.StartAsync(rules);
+        var ct = TestContext.Current.CancellationToken;
+        using var content = new StringContent(body, Encoding.UTF8, "application/json");
+        using var response = await fixture.Client.PostAsync("/mock-proxy/test/check", content, ct);
+        Assert.Equal(matches ? HttpStatusCode.Created : HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(matches ? "quantifier-match" : "quantifier-miss", await response.Content.ReadAsStringAsync(ct));
+    }
+
+    [Theory]
+    [InlineData("equals", "\"AbC\"", false, 404)]
+    [InlineData("equals", "\"AbC\"", true, 201)]
+    [InlineData("regex", "\"^AbC$\"", false, 404)]
+    [InlineData("regex", "\"^AbC$\"", true, 201)]
+    public async Task TextComparisonIsOrdinalUnlessExplicitlyIgnoringCase(string operation, string operand, bool ignoreCase, int expected)
+    {
+        var rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
+              {"id":"case","priority":1,"conditions":{"source":"body","key":"$.value","operator":"OPERATOR","value":OPERAND,"ignoreCase":IGNORE_CASE},
+               "action":{"mode":"mock","response":{"statusCode":201}}}
+            ],"default":{"mode":"mock","response":{"statusCode":404}}}}}
+            """.Replace("OPERATOR", operation, StringComparison.Ordinal)
+            .Replace("OPERAND", operand, StringComparison.Ordinal)
+            .Replace("IGNORE_CASE", ignoreCase ? "true" : "false", StringComparison.Ordinal);
+        await using var fixture = await Fixture.StartAsync(rules);
+        using var content = new StringContent("""{"value":"abc"}""", Encoding.UTF8, "application/json");
+        using var response = await fixture.Client.PostAsync("/mock-proxy/test/check", content, TestContext.Current.CancellationToken);
+        Assert.Equal((HttpStatusCode)expected, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UnsupportedNumericPrecisionIsAnInspectionErrorNotAFalseMatch()
+    {
+        const string rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
+              {"id":"numeric","priority":1,"conditions":{"source":"body","key":"$.value","operator":"greaterThan","value":1},
+               "action":{"mode":"mock","response":{"statusCode":201}}}
+            ],"default":{"mode":"mock","response":{"statusCode":404}}}}}
+            """;
+        await using var fixture = await Fixture.StartAsync(rules);
+        using var content = new StringContent("""{"value":1e100}""", Encoding.UTF8, "application/json");
+        using var response = await fixture.Client.PostAsync("/mock-proxy/test/check", content, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ExcessiveConditionDepthFailsActivation()
+    {
+        var condition = """{"source":"body","key":"$.value","operator":"exists"}""";
+        for (var depth = 0; depth < 14; depth++)
+            condition = "{\"not\":" + condition + "}";
+        var rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
+              {"id":"too-deep","priority":1,"conditions":CONDITION,"action":{"mode":"mock","response":{"statusCode":201}}}
+            ]}}}
+            """.Replace("CONDITION", condition, StringComparison.Ordinal);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await using var fixture = await Fixture.StartAsync(rules);
+        });
     }
 
     private sealed class Fixture(WebApplication app, HttpClient client, string directory) : IAsyncDisposable

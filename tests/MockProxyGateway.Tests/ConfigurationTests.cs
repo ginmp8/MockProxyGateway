@@ -71,9 +71,22 @@ public sealed class ConfigurationTests
             Assert.True(document.RootElement.GetProperty("boolean").GetBoolean());
             Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("null").ValueKind);
             Assert.Equal(JsonValueKind.False, document.RootElement.GetProperty("list")[1].ValueKind);
-            using var wrongType = new StringContent("""{"value":"42","flag":true,"nullable":null}""", Encoding.UTF8, "application/json");
-            using var unmatched = await client.PostAsync("/mock-proxy/demo/check", wrongType, ct);
-            Assert.Equal(HttpStatusCode.NotFound, unmatched.StatusCode);
+            // Keep preceding leaves eligible so the final two conditions are reached.
+            // The same negative witnesses must hold for every supported rule source.
+            await AssertNoMatchAsync("""{"value":"42","flag":true,"nullable":null}""");
+            await AssertNoMatchAsync("""{"value":42,"flag":"true","nullable":null}""");
+            await AssertNoMatchAsync("""{"value":42,"flag":true}""");
+            await AssertNoMatchAsync("""{"value":42,"flag":true,"nullable":false}""");
+            await AssertNoMatchAsync("""{"value":42,"flag":true,"nullable":null,"missing":null}""");
+            await AssertNoMatchAsync("""{"value":42,"flag":true,"nullable":null,"missing":false}""");
+
+            async Task AssertNoMatchAsync(string payload)
+            {
+                using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+                using var unmatched = await client.PostAsync("/mock-proxy/demo/check", content, ct);
+                Assert.Equal(HttpStatusCode.NotFound, unmatched.StatusCode);
+                Assert.Equal("", await unmatched.Content.ReadAsStringAsync(ct));
+            }
         }
         finally
         {
