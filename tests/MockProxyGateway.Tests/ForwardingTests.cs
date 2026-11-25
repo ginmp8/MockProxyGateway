@@ -852,7 +852,7 @@ public sealed class ForwardingTests
                     body, context.Request.Headers.Authorization.ToString(), context.Request.Headers.Cookie.ToString(),
                     context.Request.Headers["X-Test-Scenario"].ToString(),
                     context.Request.Headers["X-Private-Token"].ToString(), context.Request.Headers["X-Forwarded-For"].ToString(),
-                    context.Request.Host.Value));
+                    context.Request.Host.Value ?? ""));
                 if (context.Request.Path.Value!.EndsWith("/redirect", StringComparison.Ordinal))
                 {
                     context.Response.StatusCode = 302;

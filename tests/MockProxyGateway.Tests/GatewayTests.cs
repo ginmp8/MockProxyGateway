@@ -11,6 +11,8 @@ namespace MockProxyGateway.Tests;
 
 public sealed class GatewayTests
 {
+    private static readonly string[] MixedFlags = ["yes", "no"];
+    private static readonly string[] EqualFlags = ["yes", "yes"];
     private const string Rules = """
         {"schemaVersion":1,"destinations":{},"services":{"compliance":{"endpoints":[
           {"method":"POST","path":"/analysis","rules":[
@@ -373,7 +375,7 @@ public sealed class GatewayTests
             .Replace("QUANTIFIER", quantifier, StringComparison.Ordinal);
         await using var fixture = await Fixture.StartAsync(rules);
         using var request = new HttpRequestMessage(HttpMethod.Get, "/mock-proxy/test/check?flag=yes&FLAG=yes");
-        request.Headers.TryAddWithoutValidation("x-flag", input == "mixed" ? new[] { "yes", "no" } : new[] { "yes", "yes" });
+        request.Headers.TryAddWithoutValidation("x-flag", input == "mixed" ? MixedFlags : EqualFlags);
         request.Headers.TryAddWithoutValidation("Cookie", "flag=yes");
         using var response = await fixture.Client.SendAsync(request, TestContext.Current.CancellationToken);
         Assert.Equal((HttpStatusCode)expected, response.StatusCode);
