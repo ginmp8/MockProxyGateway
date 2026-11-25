@@ -6,7 +6,7 @@ using Json.Path;
 
 namespace MockProxyGateway.Configuration;
 
-internal sealed partial class RuleCompiler(GatewayOptions options)
+internal sealed partial class RuleCompiler(GatewayOptions options, string contentRoot)
 {
     private int _nodes;
     private int _rules;
@@ -193,15 +193,16 @@ internal sealed partial class RuleCompiler(GatewayOptions options)
 
     internal static decimal Number(JsonElement value)
     {
-        if (value.ValueKind != JsonValueKind.Number || !value.TryGetDecimal(out var number))
+        if (value.ValueKind != JsonValueKind.Number || !value.TryGetDecimal(out var number) ||
+            !JsonElement.DeepEquals(value, JsonSerializer.SerializeToElement(number)))
             throw Invalid("Unsupported numeric value.");
         return number;
     }
 
-    private static RuleAction? OptionalAction(JsonElement parent, Dictionary<string, Destination> destinations) =>
+    private RuleAction? OptionalAction(JsonElement parent, Dictionary<string, Destination> destinations) =>
         parent.TryGetProperty("default", out var value) ? Action(value, destinations) : null;
 
-    private static RuleAction Action(JsonElement item, Dictionary<string, Destination> destinations)
+    private RuleAction Action(JsonElement item, Dictionary<string, Destination> destinations)
     {
         var mode = Text(item, "mode");
         if (mode == "proxy")
@@ -217,7 +218,7 @@ internal sealed partial class RuleCompiler(GatewayOptions options)
             throw Invalid("Invalid action mode.");
         Only(item, "mode", "response");
         var response = item.GetProperty("response");
-        Only(response, "statusCode", "headers", "body", "text", "delayMs");
+        Only(response, "statusCode", "headers", "body", "text", "bodyFile", "delayMs");
         var status = response.GetProperty("statusCode").GetInt32();
         var delay = response.TryGetProperty("delayMs", out var delayValue) ? delayValue.GetInt32() : 0;
         if (status is < 200 or > 599 || delay is < 0 or > 60_000)
@@ -236,14 +237,44 @@ internal sealed partial class RuleCompiler(GatewayOptions options)
         }
         var hasJson = response.TryGetProperty("body", out var json);
         var hasText = response.TryGetProperty("text", out var text);
-        if ((hasJson && hasText) || ((hasJson || hasText) && status is 204 or 205 or 304))
+        var hasFile = response.TryGetProperty("bodyFile", out var file);
+        var bodyCount = (hasJson ? 1 : 0) + (hasText ? 1 : 0) + (hasFile ? 1 : 0);
+        if (bodyCount > 1 || (bodyCount > 0 && status is 204 or 205 or 304))
             throw Invalid("Invalid mock body combination.");
         var body = hasJson ? Encoding.UTF8.GetBytes(json.GetRawText()) :
-            hasText ? Encoding.UTF8.GetBytes(text.GetString() ?? throw Invalid("Invalid text body.")) : null;
+            hasText ? Encoding.UTF8.GetBytes(text.GetString() ?? throw Invalid("Invalid text body.")) :
+            hasFile ? ReadFixture(file.GetString() ?? throw Invalid("Invalid fixture reference.")) : null;
         if (body is { Length: > 4_194_304 })
             throw Invalid("Mock body exceeds its size limit.");
         return new RuleAction(mode, null, null, new MockResponse(status, headers, body,
-            hasJson ? "application/json; charset=utf-8" : hasText ? "text/plain; charset=utf-8" : null, delay));
+            hasJson ? "application/json; charset=utf-8" : hasText ? "text/plain; charset=utf-8" :
+            hasFile ? "application/octet-stream" : null, delay));
+
+    }
+
+    private byte[] ReadFixture(string relative)
+    {
+        if (string.IsNullOrWhiteSpace(options.FixtureRoot) || Path.IsPathRooted(relative) ||
+            relative.Contains(':') || relative.Split(['/', '\\']).Any(x => x is "" or "." or ".."))
+            throw Invalid("Invalid fixture location.");
+        var root = Path.GetFullPath(options.FixtureRoot, contentRoot);
+        var file = new FileInfo(Path.GetFullPath(relative, root));
+        if (!file.Exists || file.Length > 4_194_304 || file.Attributes.HasFlag(FileAttributes.ReparsePoint))
+            throw Invalid("Invalid fixture file.");
+        for (var directory = file.Directory; directory is not null; directory = directory.Parent)
+        {
+            if (directory.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                throw Invalid("Fixture paths must not contain links.");
+        }
+        // Only the host/operator may modify this trusted directory. Capture bytes during validation.
+        using var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (stream.Length > 4_194_304)
+            throw Invalid("Fixture exceeds its size limit.");
+        var bytes = new byte[checked((int)stream.Length)];
+        stream.ReadExactly(bytes);
+        if (stream.ReadByte() != -1)
+            throw Invalid("Fixture changed during loading.");
+        return bytes;
     }
 
     internal static void CheckDuplicates(JsonElement element)

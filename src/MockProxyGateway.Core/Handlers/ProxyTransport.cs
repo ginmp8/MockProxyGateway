@@ -36,7 +36,7 @@ internal sealed class ProxyTransport : IDisposable
         }
         var configuration = new ForwarderRequestConfig { ActivityTimeout = TimeSpan.FromSeconds(_options.ProxyTimeoutSeconds) };
         await forwarder.SendAsync(context, destination.BaseUri.AbsoluteUri, _client, configuration,
-            new GatewayTransformer(destination, path)).ConfigureAwait(false);
+            new GatewayTransformer(destination, path, _options.CredentialHeaderNames)).ConfigureAwait(false);
         // YARP handles transport failures. Never resolve or execute another action.
     }
 
@@ -64,7 +64,7 @@ internal sealed class ProxyTransport : IDisposable
 
     public void Dispose() => _client.Dispose();
 
-    private sealed class GatewayTransformer(Destination destination, string path) : HttpTransformer
+    private sealed class GatewayTransformer(Destination destination, string path, string[] credentialHeaderNames) : HttpTransformer
     {
         private static readonly string[] CredentialHeaders = ["Authorization", "Cookie", "Proxy-Authorization", "X-Api-Key", "Api-Key", "X-Auth-Token"];
 
@@ -77,7 +77,7 @@ internal sealed class ProxyTransport : IDisposable
             {
                 if (name.StartsWith("X-Forwarded-", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(name, "Forwarded", StringComparison.OrdinalIgnoreCase) ||
-                    (CredentialHeaders.Contains(name, StringComparer.OrdinalIgnoreCase) &&
+                    ((CredentialHeaders.Contains(name, StringComparer.OrdinalIgnoreCase) || credentialHeaderNames.Contains(name, StringComparer.OrdinalIgnoreCase)) &&
                         !destination.ForwardCredentials.Contains(name, StringComparer.OrdinalIgnoreCase)) ||
                     destination.RemoveHeaders.Contains(name, StringComparer.OrdinalIgnoreCase))
                     proxyRequest.Headers.Remove(name);

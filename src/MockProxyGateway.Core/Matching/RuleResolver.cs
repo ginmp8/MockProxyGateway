@@ -17,6 +17,8 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
     private JsonNode? _body;
     private bool _bodyLoaded;
     private int _budget = 65536;
+    private int _bodyNodes;
+    private readonly Dictionary<string, JsonElement[]> _bodySelections = new(StringComparer.Ordinal);
 
     internal async ValueTask<Selection> ResolveAsync(ServiceRules service, string path)
     {
@@ -115,8 +117,13 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
         {
             case "body":
                 await LoadBodyAsync().ConfigureAwait(false);
+                if (_bodySelections.TryGetValue(condition.Key!, out var cached))
+                    return cached;
+                Charge(_bodyNodes);
                 var matches = condition.JsonPath!.Evaluate(_body).Matches;
-                return matches.Select(x => JsonSerializer.SerializeToElement(x.Value)).ToArray();
+                var selected = matches.Select(x => JsonSerializer.SerializeToElement(x.Value)).ToArray();
+                _bodySelections.Add(condition.Key!, selected);
+                return selected;
             case "header":
                 strings = request.Headers.TryGetValue(condition.Key!, out var headers) ? headers.Select(x => x ?? "").ToArray() : [];
                 break;
@@ -174,19 +181,34 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                 if (buffer.Length > options.MaxBodySizeBytes)
                     throw new RequestFailure(413);
             }
-            using var document = JsonDocument.Parse(buffer.ToArray(), new JsonDocumentOptions { MaxDepth = 64 });
-            try { RuleCompiler.CheckDuplicates(document.RootElement); }
-            catch (InvalidOperationException) { throw new RequestFailure(400); }
-            _body = JsonNode.Parse(document.RootElement.GetRawText());
+            _body = JsonNode.Parse(buffer.ToArray(), documentOptions: new JsonDocumentOptions { MaxDepth = 64 });
+            // Materialize once to validate duplicate keys and bound node count before JSONPath evaluation.
+            VisitBody(_body);
             _bodyLoaded = true;
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or ArgumentException)
         {
             throw new RequestFailure(400);
         }
         finally
         {
             request.Body.Position = 0;
+        }
+    }
+
+    private void VisitBody(JsonNode? node)
+    {
+        if (++_bodyNodes > 16384)
+            throw new RequestFailure(400);
+        if (node is JsonObject obj)
+        {
+            foreach (var property in obj)
+                VisitBody(property.Value);
+        }
+        else if (node is JsonArray array)
+        {
+            foreach (var value in array)
+                VisitBody(value);
         }
     }
 
@@ -224,8 +246,9 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
             default:
                 if (actual.ValueKind != JsonValueKind.Number)
                     return false;
-                if (!actual.TryGetDecimal(out var number))
-                    throw new RequestFailure(400);
+                decimal number;
+                try { number = RuleCompiler.Number(actual); }
+                catch (InvalidOperationException) { throw new RequestFailure(400); }
                 return condition.Operator switch
                 {
                     "greaterThan" => number > RuleCompiler.Number(operand),

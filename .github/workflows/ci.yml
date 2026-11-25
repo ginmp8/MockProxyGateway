@@ -36,6 +36,21 @@ jobs:
           PY
       - name: Audit direct and transitive packages
         run: dotnet package list --vulnerable --include-transitive
+      - name: Validate example schema
+        run: |
+          python3 -m venv /tmp/mock-proxy-schema-venv
+          /tmp/mock-proxy-schema-venv/bin/pip install jsonschema==4.25.1
+          /tmp/mock-proxy-schema-venv/bin/python - <<'PY'
+          import json
+          from jsonschema import Draft202012Validator
+          with open("docs/rules.schema.json") as f:
+              schema = json.load(f)
+          Draft202012Validator.check_schema(schema)
+          for path in ("examples/mock-proxy-gateway.json", "src/MockProxyGateway.Host/mock-proxy-gateway.json", "samples/embedded-host/mock-proxy-gateway.json"):
+              with open(path) as f:
+                  Draft202012Validator(schema).validate(json.load(f))
+              print("Validated", path)
+          PY
       - name: Pack Core
         run: dotnet pack src/MockProxyGateway.Core/MockProxyGateway.Core.csproj -c Release --no-build --no-restore -o artifacts/packages
       - name: Package-only embedded consumer

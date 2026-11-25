@@ -9,7 +9,7 @@ public sealed class GatewayOptions
     public bool Enabled { get; set; } = true;
     /// <summary>Gateway path prefix.</summary>
     public string Prefix { get; set; } = "/mock-proxy";
-    /// <summary>File or Configuration rule document source.</summary>
+    /// <summary>File, Inline or Configuration rule document source.</summary>
     public string RuleSource { get; set; } = "File";
     /// <summary>Absolute or content-root-relative rule file.</summary>
     public string ConfigurationFile { get; set; } = "mock-proxy-gateway.json";
@@ -29,6 +29,10 @@ public sealed class GatewayOptions
     public string[]? AllowedEnvironments { get; set; }
     /// <summary>Optional existing host authorization policy.</summary>
     public string? AuthorizationPolicy { get; set; }
+    /// <summary>Trusted fixture directory; relative to the host content root unless absolute.</summary>
+    public string? FixtureRoot { get; set; }
+    /// <summary>Additional credential header names to strip unless explicitly permitted per destination.</summary>
+    public string[] CredentialHeaderNames { get; set; } = [];
     /// <summary>Approved upstream URI authorities (including non-default ports).</summary>
     public string[] AllowedDestinationAuthorities { get; set; } = [];
     /// <summary>Explicit approved upstream IP addresses, checked at connection time.</summary>

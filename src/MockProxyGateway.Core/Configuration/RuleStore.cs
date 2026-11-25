@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -18,6 +19,7 @@ internal sealed partial class RuleStore : IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private RuleSnapshot _snapshot;
     private string? _attemptedHash;
+    private readonly string? _explicitSerialized;
     private bool _lastFailed;
     private readonly Task _reload;
 
@@ -27,13 +29,15 @@ internal sealed partial class RuleStore : IAsyncDisposable
         _environment = environment;
         _configuration = configuration;
         _logger = logger;
+        if (!string.Equals(_options.RulesJson, configuration["MockProxyGateway:RulesJson"], StringComparison.Ordinal))
+            _explicitSerialized = _options.RulesJson;
         if (_options.AllowLoopbackForTests && !environment.IsDevelopment() &&
             !string.Equals(environment.EnvironmentName, "Testing", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Loopback forwarding is permitted only in Development or Testing.");
         try
         {
             var bytes = ReadDocument();
-            _snapshot = new RuleCompiler(_options).Compile(bytes, 1);
+            _snapshot = new RuleCompiler(_options, _environment.ContentRootPath).Compile(bytes, 1);
             _attemptedHash = Convert.ToHexString(SHA256.HashData(bytes));
             Loaded(_logger, 1);
         }
@@ -51,14 +55,21 @@ internal sealed partial class RuleStore : IAsyncDisposable
         byte[] bytes;
         if (_options.ProgrammaticRules is not null)
             bytes = Encoding.UTF8.GetBytes(_options.ProgrammaticRules().GetRawText());
+        else if (string.Equals(_options.RuleSource, "Inline", StringComparison.OrdinalIgnoreCase))
+            bytes = ReadInline();
         else if (string.Equals(_options.RuleSource, "Configuration", StringComparison.OrdinalIgnoreCase))
         {
-            var json = _configuration["MockProxyGateway:RulesJson"] ?? _options.RulesJson ??
+            if (_configuration.GetSection("MockProxyGateway:Rules").GetChildren().Any())
+                throw new InvalidOperationException("Conflicting inline and serialized rule sources.");
+            var json = _explicitSerialized ?? _configuration["MockProxyGateway:RulesJson"] ??
                 throw new InvalidOperationException("Complete serialized rule document required.");
             bytes = Encoding.UTF8.GetBytes(json);
         }
         else if (string.Equals(_options.RuleSource, "File", StringComparison.OrdinalIgnoreCase))
         {
+            if (_configuration.GetSection("MockProxyGateway:Rules").GetChildren().Any() ||
+                _configuration["MockProxyGateway:RulesJson"] is not null)
+                throw new InvalidOperationException("Conflicting file and inline/serialized rule sources.");
             var path = Path.GetFullPath(_options.ConfigurationFile, _environment.ContentRootPath);
             using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             if (input.Length > MaximumDocumentBytes)
@@ -75,6 +86,49 @@ internal sealed partial class RuleStore : IAsyncDisposable
         return bytes;
     }
 
+    private byte[] ReadInline()
+    {
+        const string section = "MockProxyGateway:Rules";
+        if (_configuration["MockProxyGateway:RulesJson"] is not null || _explicitSerialized is not null ||
+            _configuration is not IConfigurationRoot root)
+            throw new InvalidOperationException("Conflicting or unsupported inline rule source.");
+        var providers = root.Providers.Where(provider =>
+            provider.TryGet(section, out _) || provider.GetChildKeys([], section).Any()).ToArray();
+        // Do not reconstruct typed JSON from flattened string-valued configuration keys.
+        if (providers.Length != 1 || providers[0] is not JsonConfigurationProvider jsonProvider ||
+            jsonProvider.Source.FileProvider is null || jsonProvider.Source.Path is null)
+            throw new InvalidOperationException("Inline rules require one complete JSON-file provider; use a serialized document for other providers.");
+        var info = jsonProvider.Source.FileProvider.GetFileInfo(jsonProvider.Source.Path);
+        using var stream = info.CreateReadStream();
+        using var buffer = new MemoryStream();
+        var chunk = new byte[8192];
+        int count;
+        while ((count = stream.Read(chunk, 0, chunk.Length)) != 0)
+        {
+            if (buffer.Length + count > MaximumDocumentBytes)
+                throw new InvalidOperationException("Inline source too large.");
+            buffer.Write(chunk, 0, count);
+        }
+        using var document = JsonDocument.Parse(buffer.ToArray(), new JsonDocumentOptions
+        {
+            CommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true,
+            MaxDepth = 64
+        });
+        RuleCompiler.CheckDuplicates(document.RootElement);
+        var gateway = FindProperty(document.RootElement, "MockProxyGateway");
+        var rules = FindProperty(gateway, "Rules");
+        return Encoding.UTF8.GetBytes(rules.GetRawText());
+    }
+
+    private static JsonElement FindProperty(JsonElement parent, string key)
+    {
+        var matching = parent.EnumerateObject().Where(x => string.Equals(x.Name, key, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (matching.Length != 1)
+            throw new InvalidOperationException("Missing or ambiguous inline configuration section.");
+        return matching[0].Value;
+    }
+
     private async Task ReloadAsync()
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
@@ -86,10 +140,10 @@ internal sealed partial class RuleStore : IAsyncDisposable
                 {
                     var bytes = ReadDocument();
                     var hash = Convert.ToHexString(SHA256.HashData(bytes));
-                    if (hash == _attemptedHash)
+                    if (hash == _attemptedHash && !_lastFailed)
                         continue;
                     _attemptedHash = hash;
-                    var next = new RuleCompiler(_options).Compile(bytes, Current.Version + 1);
+                    var next = new RuleCompiler(_options, _environment.ContentRootPath).Compile(bytes, Current.Version + 1);
                     Volatile.Write(ref _snapshot, next);
                     _lastFailed = false;
                     Loaded(_logger, next.Version);
