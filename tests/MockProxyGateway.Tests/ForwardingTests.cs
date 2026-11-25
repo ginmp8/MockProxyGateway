@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace MockProxyGateway.Tests;
@@ -283,6 +284,50 @@ public sealed class ForwardingTests
         Assert.Contains("201", (await reader.ReadLineAsync(ct)) ?? "", StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task GatewayDiagnosticsDoNotLogUpstreamQueryOrCredentials()
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var json = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
+            """)!;
+        json["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        using var capture = new CaptureProvider();
+        await using var gateway = await StartGatewayAsync(json, upstream, capture: capture);
+        using var client = gateway.GetTestClient();
+        using var request = CreateRequest("POST", "/mock-proxy/a/resource?private=synthetic-query-secret",
+            """{"private":"synthetic-body-secret"}""");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer synthetic-auth-secret");
+        request.Headers.TryAddWithoutValidation("Cookie", "test=synthetic-cookie-secret");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var logs = capture.Messages.Where(x => x.Category.StartsWith("MockProxyGateway.", StringComparison.Ordinal) ||
+            x.Category.StartsWith("Yarp.ReverseProxy.Forwarder", StringComparison.Ordinal)).ToArray();
+        Assert.Contains(logs, x => x.Message.Contains("service=a", StringComparison.Ordinal) &&
+            x.Message.Contains("rule=service-default", StringComparison.Ordinal) &&
+            x.Message.Contains("action=proxy", StringComparison.Ordinal) &&
+            x.Message.Contains("configuration=1", StringComparison.Ordinal) &&
+            x.Message.Contains("correlation=", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, x => x.Message.Contains("synthetic-", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, x => x.Category.StartsWith("Yarp.ReverseProxy.Forwarder", StringComparison.Ordinal));
+    }
+
+    private sealed class CaptureProvider : ILoggerProvider
+    {
+        internal ConcurrentQueue<(string Category, string Message)> Messages { get; } = new();
+        public ILogger CreateLogger(string categoryName) => new CaptureLogger(categoryName, Messages);
+        public void Dispose() { }
+
+        private sealed class CaptureLogger(string category, ConcurrentQueue<(string Category, string Message)> messages) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => true;
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter) => messages.Enqueue((category, formatter(state, exception)));
+        }
+    }
+
     private static HttpRequestMessage CreateRequest(string method, string url, string? body, string? scenario = null)
     {
         var request = new HttpRequestMessage(new HttpMethod(method), url);
@@ -294,9 +339,14 @@ public sealed class ForwardingTests
     }
 
     private static async Task<WebApplication> StartGatewayAsync(JsonNode json, Upstream upstream, bool realServer = false,
-        Func<System.Text.Json.JsonElement>? provider = null)
+        Func<System.Text.Json.JsonElement>? provider = null, ILoggerProvider? capture = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        if (capture is not null)
+        {
+            builder.Logging.AddProvider(capture);
+            builder.Logging.SetMinimumLevel(LogLevel.Information);
+        }
         if (realServer)
             builder.WebHost.UseKestrel().UseUrls("http://127.0.0.1:0");
         else

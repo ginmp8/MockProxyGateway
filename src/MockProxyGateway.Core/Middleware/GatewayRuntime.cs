@@ -1,15 +1,14 @@
+using Microsoft.Extensions.DependencyInjection;
 using System.Diagnostics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authorization.Policy;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MockProxyGateway.Configuration;
 using MockProxyGateway.Handlers;
 using MockProxyGateway.Matching;
-using Yarp.ReverseProxy.Forwarder;
 
 namespace MockProxyGateway.Middleware;
 
@@ -115,7 +114,7 @@ internal sealed partial class GatewayRuntime : IDisposable
                 var escapedPath = selected.Action.PathRewrite is { } rewrite
                     ? new PathString(Uri.UnescapeDataString(rewrite)).ToUriComponent()
                     : GatewayPaths.GetForwardPath(rawPath, escapedPrefix, path);
-                if (!await _transport.ForwardAsync(context, context.RequestServices.GetRequiredService<IHttpForwarder>(),
+                if (!await _transport.ForwardAsync(context,
                     snapshot.Destinations[selected.Action.Destination!], escapedPath).ConfigureAwait(false))
                     category = "proxy-transport";
             }

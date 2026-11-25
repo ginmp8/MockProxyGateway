@@ -22,7 +22,6 @@ public static class MockProxyGatewayServiceCollectionExtensions
         services.TryAddSingleton<RuleStore>();
         services.TryAddSingleton<ProxyTransport>();
         services.TryAddSingleton<GatewayRuntime>();
-        services.AddHttpForwarder();
         return services;
     }
 

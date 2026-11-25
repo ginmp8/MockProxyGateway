@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.AspNetCore.WebUtilities;
 using MockProxyGateway.Matching;
 using Microsoft.Extensions.Options;
@@ -13,10 +16,22 @@ internal sealed class ProxyTransport : IDisposable
 {
     private readonly GatewayOptions _options;
     private readonly HttpMessageInvoker _client;
+    private readonly ServiceProvider _forwarderServices;
+    private readonly IHttpForwarder _forwarder;
 
-    public ProxyTransport(IOptions<GatewayOptions> options)
+    public ProxyTransport(IOptions<GatewayOptions> options, TimeProvider clock)
     {
         _options = options.Value;
+        // The pinned YARP forwarder logs complete target URLs (including query strings).
+        // Isolate only this adapter in a private, gateway-owned provider. Never change host logging,
+        // nor reuse a host forwarder with its potentially different diagnostic or transport policy.
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance);
+        services.AddSingleton(clock);
+        services.AddHttpForwarder();
+        _forwarderServices = services.BuildServiceProvider();
+        _forwarder = _forwarderServices.GetRequiredService<IHttpForwarder>();
         _client = new HttpMessageInvoker(new SocketsHttpHandler
         {
             UseProxy = false,
@@ -29,7 +44,7 @@ internal sealed class ProxyTransport : IDisposable
         });
     }
 
-    internal async Task<bool> ForwardAsync(HttpContext context, IHttpForwarder forwarder, Destination destination, string path)
+    internal async Task<bool> ForwardAsync(HttpContext context, Destination destination, string path)
     {
         if (!ProxyDestinationPolicy.IsValid(destination.BaseUri, _options))
         {
@@ -37,7 +52,7 @@ internal sealed class ProxyTransport : IDisposable
             return false;
         }
         var configuration = new ForwarderRequestConfig { ActivityTimeout = TimeSpan.FromSeconds(_options.ProxyTimeoutSeconds) };
-        var error = await forwarder.SendAsync(context, destination.BaseUri.AbsoluteUri, _client, configuration,
+        var error = await _forwarder.SendAsync(context, destination.BaseUri.AbsoluteUri, _client, configuration,
             new GatewayTransformer(destination, path, _options.CredentialHeaderNames)).ConfigureAwait(false);
         // YARP handles transport failures. Never resolve or execute another action.
         return error == ForwarderError.None;
@@ -65,7 +80,11 @@ internal sealed class ProxyTransport : IDisposable
         }
     }
 
-    public void Dispose() => _client.Dispose();
+    public void Dispose()
+    {
+        _client.Dispose();
+        _forwarderServices.Dispose();
+    }
 
     private sealed class GatewayTransformer(Destination destination, string path, string[] credentialHeaderNames) : HttpTransformer
     {
