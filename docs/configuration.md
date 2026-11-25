@@ -124,16 +124,17 @@ queries or value-returning functions. Slices cannot duplicate visits to a candid
 subtree; unions preserve duplicates and are charged for cumulative multiplicity.
 Root queries receive the separate repeated-root work charge even inside functions.
 Negated terms are explicitly grouped before library evaluation to preserve NOT
-precedence. Nested filters, predicate descent, other functions and filters
-combined with recursive descent are rejected. The pinned JsonPath.Net 3.0.2
+precedence. One outer recursive descent may precede, follow or contain the
+single filter. Nested filters, predicate descent, other functions and repeated
+descent are rejected. The pinned JsonPath.Net 3.0.2
 `length()` counts text elements instead of Unicode scalar values for strings;
 it is not admitted until RFC-correct behavior can be provided.
 The request budget is charged before evaluation for body nodes multiplied by
 the union product; when descent is present, the charge also accounts for
 descendant traversal and every subsequent segment. Filters conservatively
 charge for predicate length, body nodes and body bytes before evaluation;
-root references additionally charge a worst-case repeated root traversal and
-comparison for every possible candidate;
+root references and filters combined with descent additionally charge a
+worst-case whole-input traversal and comparison for every possible candidate;
 they also validate all numeric values in the inspected body once before the
 first filter, rejecting values that cannot be represented exactly as decimals.
 Numeric range comparisons reject unsupported decimal precision rather than rounding. Condition depth is at most 12; rule count 4096; condition nodes

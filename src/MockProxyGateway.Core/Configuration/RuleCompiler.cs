@@ -179,7 +179,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
         JsonPath? jsonPath = null;
         var pathMultiplier = 1;
         var hasFilter = false;
-        var hasRootReference = false;
+        var hasRepeatedTraversal = false;
         if (source == "body")
         {
             // Parse RFC 9535 syntax with the pinned library, not a second approximate grammar.
@@ -211,28 +211,28 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                     throw Invalid("JSONPath union complexity limit exceeded.");
                 pathMultiplier *= segment.Selectors.Length;
             }
-            // Charge descent traversal and child selection, plus each following segment:
-            // after descent, candidates at different depths can revisit nodes across stages.
-            if (recursive)
-                pathMultiplier *= 2 + recursiveSuffix;
             if (hasFilter)
             {
-                if (recursive)
-                    throw Invalid("JSONPath filters cannot be combined with recursive descent.");
-                var normalized = BoundedJsonPathFilter.Normalize(key, out hasRootReference, out var predicateUnionProduct);
+                var normalized = BoundedJsonPathFilter.Normalize(key, out var hasRootReference, out var predicateUnionProduct);
+                // Descent may make filter candidate subtrees overlap. Charge worst-case
+                // repeated traversal even for a relative predicate in that case.
+                hasRepeatedTraversal = hasRootReference || recursive;
                 if (predicateUnionProduct > 4 / pathMultiplier)
                     throw Invalid("JSONPath predicate union complexity limit exceeded.");
                 pathMultiplier *= predicateUnionProduct;
                 if (!JsonPath.TryParse(normalized, out jsonPath))
                     throw Invalid("Invalid bounded JSONPath filter.");
-                // With no descent or nested filter, each candidate subtree is disjoint
-                // except for the bounded outer and predicate union multiplicity. Charge a conservative
-                // upper bound on predicate operations per node and input byte.
+                // Charge predicate operations per node and input byte. The resolver
+                // separately charges repeated traversal when candidate subtrees may overlap.
                 pathMultiplier *= key.Length + 1;
             }
+            // Keep the union cap independent of the descent work multiplier.
+            // Charge descent traversal and child selection, plus each following segment.
+            if (recursive)
+                pathMultiplier *= 2 + recursiveSuffix;
         }
         return new Condition("leaf", [], source, key, op, hasValue ? operand.Clone() : default,
-            quantifier, ignoreCase, regex, jsonPath, hasValue ? 1 + operand.GetRawText().Length / 64 : 0, pathMultiplier, hasFilter, hasRootReference);
+            quantifier, ignoreCase, regex, jsonPath, hasValue ? 1 + operand.GetRawText().Length / 64 : 0, pathMultiplier, hasFilter, hasRepeatedTraversal);
     }
 
     internal static decimal Number(JsonElement value)

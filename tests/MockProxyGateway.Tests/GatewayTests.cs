@@ -233,7 +233,7 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[*] == 42]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[*] == @.value]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?@.value]]\",\"operator\":\"exists\"}")]
-    [InlineData("{\"source\":\"body\",\"key\":\"$..items[?@.value]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$..items[?@.value]..value\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.value][?@.value]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.value == 1e1000]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$[0,1,2][0,1]\",\"operator\":\"exists\"}")]
@@ -348,6 +348,14 @@ public sealed class GatewayTests
     [InlineData("$.items[?count(@.tags[0:1,1:2]) == 2].value", "{\"items\":[{\"tags\":[0,1],\"value\":42}]}", 201)]
     [InlineData("$.items[?count($.flags[0,0]) == 2].value", "{\"flags\":[null],\"items\":[{\"value\":42}]}", 201)]
     [InlineData("$.items[?count($.flags[0,0]) == 2].value", "{\"flags\":[],\"items\":[{\"value\":42}]}", 404)]
+    [InlineData("$..items[?@.active == true].value", "{\"nested\":{\"items\":[{\"active\":true,\"value\":42}]}}", 201)]
+    [InlineData("$..items[?@.active == true].value", "{\"nested\":{\"items\":[{\"active\":false,\"value\":42}]}}", 404)]
+    [InlineData("$.items[?@.active == true]..value", "{\"items\":[{\"active\":true,\"nested\":{\"value\":42}}]}", 201)]
+    [InlineData("$.items[?@.active == true]..value", "{\"items\":[{\"active\":false,\"nested\":{\"value\":42}}]}", 404)]
+    [InlineData("$..[?@.active == true].value", "{\"nested\":{\"items\":[{\"active\":true,\"value\":42}]}}", 201)]
+    [InlineData("$..[?@.active == true].value", "{\"nested\":{\"items\":[{\"active\":false,\"value\":42}]}}", 404)]
+    [InlineData("$..items[?count(@.tags[0,0]) == 2].value", "{\"items\":[{\"tags\":[1],\"value\":42}]}", 201)]
+    [InlineData("$..items[?count(@.tags[0,0]) == 2].value", "{\"items\":[{\"tags\":[],\"value\":42}]}", 404)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """
