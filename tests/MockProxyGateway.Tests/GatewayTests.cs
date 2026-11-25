@@ -224,7 +224,10 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.value == $.expected[*]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count($.items[*])]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.tags[0:1] == 42]\",\"operator\":\"exists\"}")]
-    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@.tags[0,1]) == 2]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.tags[0,1] == 42]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@.tags[0,1,2,3,4]) == 5]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@.tags[0,1,2][0,1]) == 6]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$['items','items'][?count(@.tags[0,1,2]) == 3]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@.nested[?@.value]) == 1]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@.nested) ]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[*] == 42]\",\"operator\":\"exists\"}")]
@@ -337,6 +340,14 @@ public sealed class GatewayTests
     [InlineData("$.items[?count($.flags[*]) == 2].value", "{\"flags\":[1],\"items\":[{\"value\":42}]}", 404)]
     [InlineData("$.items[?value($.flags[1:2]) == null].value", "{\"flags\":[0,null],\"items\":[{\"value\":42}]}", 201)]
     [InlineData("$.items[?value($.flags[1:2]) == null].value", "{\"flags\":[0],\"items\":[{\"value\":42}]}", 404)]
+    [InlineData("$.items[?count(@.tags[0,1]) == 2].value", "{\"items\":[{\"tags\":[0,null],\"value\":42}]}", 201)]
+    [InlineData("$.items[?count(@.tags[0,1]) == 2].value", "{\"items\":[{\"tags\":[0],\"value\":42}]}", 404)]
+    [InlineData("$.items[?count(@.tags[0,0]) == 2].value", "{\"items\":[{\"tags\":[0],\"value\":42}]}", 201)]
+    [InlineData("$.items[?value(@.tags[0,0]) == 'x'].value", "{\"items\":[{\"tags\":[\"x\"],\"value\":42}]}", 404)]
+    [InlineData("$.items[?count(@['a','b'][0,1]) == 4].value", "{\"items\":[{\"a\":[0,1],\"b\":[2,3],\"value\":42}]}", 201)]
+    [InlineData("$.items[?count(@.tags[0:1,1:2]) == 2].value", "{\"items\":[{\"tags\":[0,1],\"value\":42}]}", 201)]
+    [InlineData("$.items[?count($.flags[0,0]) == 2].value", "{\"flags\":[null],\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?count($.flags[0,0]) == 2].value", "{\"flags\":[],\"items\":[{\"value\":42}]}", 404)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """

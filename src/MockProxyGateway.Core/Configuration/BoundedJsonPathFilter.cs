@@ -8,9 +8,10 @@ namespace MockProxyGateway.Configuration;
 // It examines the original expression, not a potentially lossy AST rendering.
 internal static class BoundedJsonPathFilter
 {
-    internal static string Normalize(string path, out bool usesRoot)
+    internal static string Normalize(string path, out bool usesRoot, out int maxUnionProduct)
     {
         usesRoot = false;
+        maxUnionProduct = 1;
         var index = 0;
         var grouping = new List<(int Offset, char Character)>();
         while (index < path.Length)
@@ -22,7 +23,7 @@ internal static class BoundedJsonPathFilter
             }
             if (path[index++] == '[' && Take(path, ref index, "?"))
             {
-                ReadExpression(path, ref index, 0, grouping, ref usesRoot);
+                ReadExpression(path, ref index, 0, grouping, ref usesRoot, ref maxUnionProduct);
                 Require(path, ref index, "]");
                 if (grouping.Count == 0)
                     return path;
@@ -35,14 +36,14 @@ internal static class BoundedJsonPathFilter
         throw Invalid();
     }
 
-    private static void ReadExpression(string path, ref int index, int depth, List<(int Offset, char Character)> grouping, ref bool usesRoot)
+    private static void ReadExpression(string path, ref int index, int depth, List<(int Offset, char Character)> grouping, ref bool usesRoot, ref int maxUnionProduct)
     {
-        ReadTerm(path, ref index, depth, grouping, ref usesRoot);
+        ReadTerm(path, ref index, depth, grouping, ref usesRoot, ref maxUnionProduct);
         while (Take(path, ref index, "&&") || Take(path, ref index, "||"))
-            ReadTerm(path, ref index, depth, grouping, ref usesRoot);
+            ReadTerm(path, ref index, depth, grouping, ref usesRoot, ref maxUnionProduct);
     }
 
-    private static void ReadTerm(string path, ref int index, int depth, List<(int Offset, char Character)> grouping, ref bool usesRoot)
+    private static void ReadTerm(string path, ref int index, int depth, List<(int Offset, char Character)> grouping, ref bool usesRoot, ref int maxUnionProduct)
     {
         if (depth > 8)
             throw Invalid();
@@ -50,7 +51,7 @@ internal static class BoundedJsonPathFilter
         var termStart = index;
         if (Take(path, ref index, "!"))
         {
-            ReadTerm(path, ref index, depth + 1, grouping, ref usesRoot);
+            ReadTerm(path, ref index, depth + 1, grouping, ref usesRoot, ref maxUnionProduct);
             // The pinned unary parser consumes a complete logical expression.
             // Explicitly group the negated term to preserve RFC NOT precedence.
             grouping.Add((termStart, '('));
@@ -59,17 +60,17 @@ internal static class BoundedJsonPathFilter
         }
         if (Take(path, ref index, "("))
         {
-            ReadExpression(path, ref index, depth + 1, grouping, ref usesRoot);
+            ReadExpression(path, ref index, depth + 1, grouping, ref usesRoot, ref maxUnionProduct);
             Require(path, ref index, ")");
             return;
         }
 
-        var left = ReadOperand(path, ref index, ref usesRoot);
+        var left = ReadOperand(path, ref index, ref usesRoot, ref maxUnionProduct);
         if (Take(path, ref index, "==") || Take(path, ref index, "!=") ||
             Take(path, ref index, "<=") || Take(path, ref index, ">=") ||
             Take(path, ref index, "<") || Take(path, ref index, ">"))
         {
-            var right = ReadOperand(path, ref index, ref usesRoot);
+            var right = ReadOperand(path, ref index, ref usesRoot, ref maxUnionProduct);
             if (!left.Comparable || !right.Comparable)
                 throw Invalid();
         }
@@ -79,7 +80,7 @@ internal static class BoundedJsonPathFilter
 
     // A query may be tested for existence; comparisons require a singular
     // query or a value. The pinned parser still validates full RFC syntax.
-    private static (bool Query, bool Comparable) ReadOperand(string path, ref int index, ref bool usesRoot)
+    private static (bool Query, bool Comparable) ReadOperand(string path, ref int index, ref bool usesRoot, ref int maxUnionProduct)
     {
         SkipWhitespace(path, ref index);
         if (index >= path.Length)
@@ -88,11 +89,11 @@ internal static class BoundedJsonPathFilter
         {
             var root = path[index++] == '$';
             usesRoot |= root;
-            var singular = ReadSegments(path, ref index);
+            var singular = ReadSegments(path, ref index, ref maxUnionProduct);
             return (true, singular);
         }
-        // These built-ins have bounded work on a nodelist without recursion
-        // or unions. Root queries receive the separate repeated-root charge.
+        // These built-ins have bounded work on a nodelist without recursion.
+        // Root queries receive the separate repeated-root charge.
         // Do not admit dynamic/regex or custom functions.
         if (Take(path, ref index, "count") || Take(path, ref index, "value"))
         {
@@ -101,7 +102,7 @@ internal static class BoundedJsonPathFilter
             if (index >= path.Length || path[index] is not ('@' or '$'))
                 throw Invalid();
             usesRoot |= path[index++] == '$';
-            ReadSegments(path, ref index);
+            ReadSegments(path, ref index, ref maxUnionProduct);
             Require(path, ref index, ")");
             return (false, true);
         }
@@ -123,9 +124,10 @@ internal static class BoundedJsonPathFilter
         return (false, true);
     }
 
-    private static bool ReadSegments(string path, ref int index)
+    private static bool ReadSegments(string path, ref int index, ref int maxUnionProduct)
     {
         var singular = true;
+        var unionProduct = 1;
         while (index < path.Length)
         {
             if (path[index] == '.')
@@ -146,30 +148,46 @@ internal static class BoundedJsonPathFilter
             else if (path[index] == '[')
             {
                 index++;
-                SkipWhitespace(path, ref index);
-                if (Take(path, ref index, "*"))
-                    singular = false;
-                else if (index < path.Length && path[index] is '\'' or '"')
-                    ReadQuoted(path, ref index);
-                else
+                var selectors = 1;
+                singular &= ReadSelector(path, ref index);
+                while (Take(path, ref index, ","))
                 {
-                    var hasIndex = ReadOptionalIndex(path, ref index);
-                    if (Take(path, ref index, ":"))
-                    {
-                        singular = false;
-                        ReadOptionalIndex(path, ref index);
-                        if (Take(path, ref index, ":"))
-                            ReadOptionalIndex(path, ref index);
-                    }
-                    else if (!hasIndex)
+                    if (++selectors > 4 / unionProduct)
                         throw Invalid();
+                    _ = ReadSelector(path, ref index);
+                    singular = false;
                 }
+                unionProduct *= selectors;
                 Require(path, ref index, "]");
             }
             else
                 break;
         }
+        maxUnionProduct = Math.Max(maxUnionProduct, unionProduct);
         return singular;
+    }
+
+    private static bool ReadSelector(string path, ref int index)
+    {
+        SkipWhitespace(path, ref index);
+        if (Take(path, ref index, "*"))
+            return false;
+        if (index < path.Length && path[index] is '\'' or '"')
+        {
+            ReadQuoted(path, ref index);
+            return true;
+        }
+        var hasIndex = ReadOptionalIndex(path, ref index);
+        if (Take(path, ref index, ":"))
+        {
+            ReadOptionalIndex(path, ref index);
+            if (Take(path, ref index, ":"))
+                ReadOptionalIndex(path, ref index);
+            return false;
+        }
+        if (!hasIndex)
+            throw Invalid();
+        return true;
     }
 
     // A slice selects each member at most once; unlike unions or descent it

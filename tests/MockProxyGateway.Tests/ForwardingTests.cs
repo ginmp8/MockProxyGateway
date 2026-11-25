@@ -617,6 +617,32 @@ public sealed class ForwardingTests
             Assert.Equal(payload, Assert.Single(upstream.Requests).Body);
     }
 
+    [Theory]
+    [InlineData("$.items[?count(@['score']) == 2]", 201, 1)]
+    [InlineData("$.items[?count(@['score','score','score','score']) == 2]", 400, 0)]
+    public async Task PredicateUnionMultiplicityIsChargedBeforeForwarding(string selector, int expectedStatus, int expectedCalls)
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"predicate-union","priority":1,"conditions":{"source":"body","key":"$.items","operator":"exists"},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        rules["services"]!["a"]!["rules"]![0]!["conditions"]!["key"] = selector;
+        await using var gateway = await StartGatewayAsync(rules, upstream);
+        using var client = gateway.GetTestClient();
+        var payload = "{\"items\":[" + string.Join(',', Enumerable.Repeat("{\"score\":9}", 400)) + "]}";
+        using var body = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync("/mock-proxy/a/check", body, TestContext.Current.CancellationToken);
+        Assert.Equal((HttpStatusCode)expectedStatus, response.StatusCode);
+        Assert.Equal(expectedCalls, upstream.Requests.Count);
+        if (expectedCalls == 1)
+            Assert.Equal(payload, Assert.Single(upstream.Requests).Body);
+    }
+
     [Fact]
     public async Task OptionalNamedPolicyProtectsRealForwardingAndPreservesSeparateHostPolicy()
     {
