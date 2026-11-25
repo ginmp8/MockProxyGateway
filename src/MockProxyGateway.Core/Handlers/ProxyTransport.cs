@@ -29,17 +29,18 @@ internal sealed class ProxyTransport : IDisposable
         });
     }
 
-    internal async Task ForwardAsync(HttpContext context, IHttpForwarder forwarder, Destination destination, string path)
+    internal async Task<bool> ForwardAsync(HttpContext context, IHttpForwarder forwarder, Destination destination, string path)
     {
         if (!ProxyDestinationPolicy.IsValid(destination.BaseUri, _options))
         {
             context.Response.StatusCode = StatusCodes.Status502BadGateway;
-            return;
+            return false;
         }
         var configuration = new ForwarderRequestConfig { ActivityTimeout = TimeSpan.FromSeconds(_options.ProxyTimeoutSeconds) };
-        await forwarder.SendAsync(context, destination.BaseUri.AbsoluteUri, _client, configuration,
+        var error = await forwarder.SendAsync(context, destination.BaseUri.AbsoluteUri, _client, configuration,
             new GatewayTransformer(destination, path, _options.CredentialHeaderNames)).ConfigureAwait(false);
         // YARP handles transport failures. Never resolve or execute another action.
+        return error == ForwarderError.None;
     }
 
     private async ValueTask<Stream> ConnectAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)

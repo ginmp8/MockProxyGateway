@@ -77,10 +77,15 @@ internal sealed partial class GatewayRuntime : IDisposable
         var alias = "unknown";
         var ruleId = "none";
         var action = "none";
+        var category = "completed";
+        var correlation = Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
         try
         {
             if (!await AuthorizeAsync(context).ConfigureAwait(false))
+            {
+                category = "authorization";
                 return;
+            }
             var remainder = remaining.Value!;
             var split = remainder.IndexOf('/', 1);
             var requestedAlias = split < 0 ? remainder[1..] : remainder[1..split];
@@ -88,6 +93,7 @@ internal sealed partial class GatewayRuntime : IDisposable
             if (!GatewayPaths.Identifier().IsMatch(requestedAlias) ||
                 !snapshot.Services.TryGetValue(requestedAlias, out var service) || !service.Enabled)
             {
+                category = "service-not-found";
                 context.Response.StatusCode = 404;
                 return;
             }
@@ -96,6 +102,7 @@ internal sealed partial class GatewayRuntime : IDisposable
             ruleId = selected.RuleId;
             if (selected.Action is null)
             {
+                category = "no-action";
                 context.Response.StatusCode = 404;
                 return;
             }
@@ -108,12 +115,16 @@ internal sealed partial class GatewayRuntime : IDisposable
                 var escapedPath = selected.Action.PathRewrite is { } rewrite
                     ? new PathString(Uri.UnescapeDataString(rewrite)).ToUriComponent()
                     : GatewayPaths.GetForwardPath(rawPath, escapedPrefix, path);
-                await _transport.ForwardAsync(context, context.RequestServices.GetRequiredService<IHttpForwarder>(),
-                    snapshot.Destinations[selected.Action.Destination!], escapedPath).ConfigureAwait(false);
+                if (!await _transport.ForwardAsync(context, context.RequestServices.GetRequiredService<IHttpForwarder>(),
+                    snapshot.Destinations[selected.Action.Destination!], escapedPath).ConfigureAwait(false))
+                    category = "proxy-transport";
             }
         }
         catch (RequestFailure failure)
         {
+            category = failure.Category;
+            if (failure.FirstRule is { } first && failure.SecondRule is { } second)
+                RuleConflict(_logger, alias, first, second, snapshot.Version, correlation);
             if (!context.Response.HasStarted)
                 context.Response.StatusCode = failure.StatusCode;
             else
@@ -121,10 +132,12 @@ internal sealed partial class GatewayRuntime : IDisposable
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
         {
+            category = "cancelled";
             context.Abort();
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or ArgumentException or System.Text.Json.JsonException)
         {
+            category = "action-error";
             if (!context.Response.HasStarted)
             {
                 context.Response.Clear();
@@ -139,7 +152,7 @@ internal sealed partial class GatewayRuntime : IDisposable
             {
                 var duration = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
                 Completed(_logger, alias, ruleId, action, context.Response.StatusCode, snapshot.Version,
-                    duration, context.TraceIdentifier);
+                    duration, correlation, category);
             }
             _concurrency.Release();
         }
@@ -183,6 +196,10 @@ internal sealed partial class GatewayRuntime : IDisposable
     public void Dispose() => _concurrency.Dispose();
 
     [LoggerMessage(EventId = 200, Level = LogLevel.Information,
-        Message = "Gateway service={Service} rule={Rule} action={Action} status={Status} configuration={Version} durationMs={Duration} correlation={Correlation}")]
-    private static partial void Completed(ILogger logger, string service, string rule, string action, int status, long version, double duration, string correlation);
+        Message = "Gateway service={Service} rule={Rule} action={Action} status={Status} configuration={Version} durationMs={Duration} correlation={Correlation} category={Category}")]
+    private static partial void Completed(ILogger logger, string service, string rule, string action, int status, long version, double duration, string correlation, string category);
+
+    [LoggerMessage(EventId = 201, Level = LogLevel.Warning,
+        Message = "Gateway rule conflict service={Service} first={FirstRule} second={SecondRule} configuration={Version} correlation={Correlation}")]
+    private static partial void RuleConflict(ILogger logger, string service, string firstRule, string secondRule, long version, string correlation);
 }

@@ -7,9 +7,12 @@ using MockProxyGateway.Configuration;
 
 namespace MockProxyGateway.Matching;
 
-internal sealed class RequestFailure(int statusCode) : Exception
+internal sealed class RequestFailure(int statusCode, string category = "evaluation", string? firstRule = null, string? secondRule = null) : Exception
 {
     internal int StatusCode { get; } = statusCode;
+    internal string Category { get; } = category;
+    internal string? FirstRule { get; } = firstRule;
+    internal string? SecondRule { get; } = secondRule;
 }
 
 internal sealed class RuleResolver(HttpContext context, GatewayOptions options, DateTimeOffset now)
@@ -46,7 +49,7 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                 ambiguous = true;
         }
         if (ambiguous)
-            throw new RequestFailure(500);
+            throw new RequestFailure(500, "endpoint-conflict");
         if (selected is not null)
         {
             var match = await SelectAsync(selected.Rules, route, path).ConfigureAwait(false);
@@ -70,7 +73,7 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
             if (!await MatchesAsync(rule.Condition, route, path).ConfigureAwait(false))
                 continue;
             if (winner is not null)
-                throw new RequestFailure(500);
+                throw new RequestFailure(500, "rule-conflict", winner.Id, rule.Id);
             winner = rule;
         }
         return winner is null ? null : new Selection(winner.Action, winner.Id);
@@ -161,9 +164,9 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
         if (!MediaTypeHeaderValue.TryParse(request.ContentType, out var type) ||
             !(string.Equals(type.MediaType.Value, "application/json", StringComparison.OrdinalIgnoreCase) ||
                 (type.MediaType.Value?.EndsWith("+json", StringComparison.OrdinalIgnoreCase) ?? false)))
-            throw new RequestFailure(415);
+            throw new RequestFailure(415, "body-media-type");
         if (request.ContentLength > options.MaxBodySizeBytes)
-            throw new RequestFailure(413);
+            throw new RequestFailure(413, "body-size");
         request.EnableBuffering(bufferThreshold: 32_768, bufferLimit: (long)options.MaxBodySizeBytes + 1);
         using var buffer = new MemoryStream();
         var chunk = new byte[8192];
@@ -173,13 +176,13 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
             {
                 var remaining = options.MaxBodySizeBytes + 1 - (int)buffer.Length;
                 if (remaining <= 0)
-                    throw new RequestFailure(413);
+                    throw new RequestFailure(413, "body-size");
                 var count = await request.Body.ReadAsync(chunk.AsMemory(0, Math.Min(remaining, chunk.Length)), context.RequestAborted).ConfigureAwait(false);
                 if (count == 0)
                     break;
                 buffer.Write(chunk, 0, count);
                 if (buffer.Length > options.MaxBodySizeBytes)
-                    throw new RequestFailure(413);
+                    throw new RequestFailure(413, "body-size");
             }
             _body = JsonNode.Parse(buffer.ToArray(), documentOptions: new JsonDocumentOptions { MaxDepth = 64 });
             // Materialize once to validate duplicate keys and bound node count before JSONPath evaluation.
@@ -188,7 +191,7 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
         }
         catch (Exception ex) when (ex is JsonException or ArgumentException)
         {
-            throw new RequestFailure(400);
+            throw new RequestFailure(400, "body-json");
         }
         finally
         {
@@ -199,7 +202,7 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
     private void VisitBody(JsonNode? node)
     {
         if (++_bodyNodes > 16384)
-            throw new RequestFailure(400);
+            throw new RequestFailure(400, "body-complexity");
         if (node is JsonObject obj)
         {
             foreach (var property in obj)
@@ -217,7 +220,7 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
         context.RequestAborted.ThrowIfCancellationRequested();
         _budget -= count;
         if (_budget < 0)
-            throw new RequestFailure(400);
+            throw new RequestFailure(400, "evaluation-budget");
     }
 
     private static bool Compare(Condition condition, JsonElement actual)
@@ -242,7 +245,7 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
             case "endsWith": return actual.ValueKind == JsonValueKind.String && actual.GetString()!.EndsWith(operand.GetString()!, comparison);
             case "regex":
                 try { return actual.ValueKind == JsonValueKind.String && condition.Regex!.IsMatch(actual.GetString()!); }
-                catch (RegexMatchTimeoutException) { throw new RequestFailure(400); }
+                catch (RegexMatchTimeoutException) { throw new RequestFailure(400, "regex-timeout"); }
             default:
                 if (actual.ValueKind != JsonValueKind.Number)
                     return false;

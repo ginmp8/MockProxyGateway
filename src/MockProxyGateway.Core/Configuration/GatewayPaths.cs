@@ -37,7 +37,7 @@ internal static partial class GatewayPaths
                     return false;
                 i += 2;
             }
-            else if (!(char.IsAsciiLetterOrDigit(c) || "-._~!    [GeneratedRegex("^[A-Za-z0-9]'()*+,;=:@/".Contains(c) || (query && c == '?')))
+            else if (!(char.IsAsciiLetterOrDigit(c) || "-._~!$&'()*+,;=:@/".Contains(c) || (query && c == '?')))
                 return false;
         }
         return true;
