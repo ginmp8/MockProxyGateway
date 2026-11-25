@@ -252,7 +252,7 @@ internal static class BoundedJsonPathFilter
                 }
                 if (replaced != 1)
                     throw Invalid();
-                return (_, candidate) => query.Evaluate(candidate).Matches.Any();
+                return (_, candidate) => query.Evaluate(candidate).Matches.Count != 0;
             }
 
             if (!JsonPath.TryParse("$[?" + expression.ToString().Trim() + "]", out var parsed) ||
@@ -263,7 +263,7 @@ internal static class BoundedJsonPathFilter
     }
 
     // The locked length() counts graphemes instead of Unicode scalars. Admit
-    // a singular-query-to-number comparison with a private predicate,
+    // a singular-query or string-literal comparison with a private predicate,
     // never by replacing a process-global JsonPath.Net function registration.
     private static bool TryReadLengthFilter(string path, ref int index, out ISelector? selector, ref bool usesRepeatedTraversal)
     {
@@ -276,21 +276,37 @@ internal static class BoundedJsonPathFilter
         Require(path, ref cursor, "(");
         SkipWhitespace(path, ref cursor);
         var start = cursor;
-        if (cursor >= path.Length || path[cursor] is not ('@' or '$'))
+        if (cursor >= path.Length)
             throw Invalid();
-        usesRepeatedTraversal |= path[cursor] == '$';
-        while (cursor < path.Length && path[cursor] != ')')
+        JsonPath? argument = null;
+        int? literalLength = null;
+        if (path[cursor] is '\'' or '"')
         {
-            if (path[cursor] is '\'' or '"')
-                ReadQuoted(path, ref cursor);
-            else
-                cursor++;
+            ReadQuoted(path, ref cursor);
+            // Decode using the pinned parser's RFC string literal rules.
+            if (!JsonPath.TryParse("$[" + path[start..cursor] + "]", out var literal) ||
+                literal.Segments[0].Selectors[0] is not NameSelector name)
+                throw Invalid();
+            literalLength = BoundedLengthFilterSelector.ScalarCount(name.Name);
         }
-        if (cursor == path.Length ||
-            !JsonPath.TryParse(path[start..cursor].Trim(), out var argument,
-                new PathParsingOptions { AllowRelativePathStart = true }) ||
-            !argument.IsSingular || argument.Segments.Length > 16)
-            throw Invalid();
+        else
+        {
+            if (path[cursor] is not ('@' or '$'))
+                throw Invalid();
+            usesRepeatedTraversal |= path[cursor] == '$';
+            while (cursor < path.Length && path[cursor] != ')')
+            {
+                if (path[cursor] is '\'' or '"')
+                    ReadQuoted(path, ref cursor);
+                else
+                    cursor++;
+            }
+            if (cursor == path.Length ||
+                !JsonPath.TryParse(path[start..cursor].Trim(), out argument,
+                    new PathParsingOptions { AllowRelativePathStart = true }) ||
+                !argument.IsSingular || argument.Segments.Length > 16)
+                throw Invalid();
+        }
         Require(path, ref cursor, ")");
         string? comparison = null;
         foreach (var op in new[] { "==", "!=", "<=", ">=", "<", ">" })
@@ -310,7 +326,7 @@ internal static class BoundedJsonPathFilter
         if (start == cursor)
             throw Invalid();
         using var number = JsonDocument.Parse(path[start..cursor]);
-        selector = new BoundedLengthFilterSelector(argument, RuleCompiler.Number(number.RootElement), comparison,
+        selector = new BoundedLengthFilterSelector(argument, literalLength, RuleCompiler.Number(number.RootElement), comparison,
             path[expressionStart..cursor]);
         index = cursor;
         return true;

@@ -142,13 +142,13 @@ filter cannot contain root references inside predicates, predicate unions or
 recursive descent;
 additional nested levels and a third descent inside any query remain rejected.
 The locked JsonPath.Net version is 2.2.0 (MIT). An outer filter
-`length(@.name) == 2` (or a root/singular indexed query with any of the six
+`length(@.name) == 2` (or a root/singular indexed query or a string literal with any of the six
 comparison operators and an exact numeric literal) uses a gateway-local
 selector: string length counts Unicode scalar values, object/array length
 counts members, and unsupported or missing values produce Nothing. The
 [pinned upstream length implementation](https://github.com/json-everything/json-everything/blob/f53d4d27eeed6a73d377bf4188175f0b8a46f856/src/JsonPath/LengthFunction.cs)
 counts graphemes, so the gateway does not evaluate that function or modify
-the process-global registry. The same traversal/byte budgets apply. Logical combinations with ordinary predicates and the other private functions are supported in outer filters and one nested relative existence query. Other length argument forms and private nested predicates inside count/value remain rejected.
+the process-global registry. The same traversal/byte budgets apply. Logical combinations with ordinary predicates and the other private functions are supported in outer filters and one nested relative existence query. String literals are decoded and counted once during compilation. Other length argument forms and private nested predicates inside count/value remain rejected.
 `match(@.name, 'test-.*')` and `search(@.name, '[A-Z]+')` use private
 selectors with constant I-Regexp patterns and singular relative/root queries.
 Supported patterns: Unicode literals (including literal ^ and $), scalar dot

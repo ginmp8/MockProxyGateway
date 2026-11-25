@@ -597,6 +597,13 @@ public sealed class GatewayTests
     [InlineData("$.items[?@.nested[?match(@.name, 'x')].flag].value", "{\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":null}],\"value\":42}]}", 201)]
     [InlineData("$.items[?@.nested[?match(@.name, 'x')].flag].value", "{\"items\":[{\"nested\":[{\"name\":\"x\"}],\"value\":42}]}", 404)]
     [InlineData("$.items[?@.nested[?match(@.name, 'x')]].value", "{\"items\":[{\"nested\":[{\"name\":\"y\"}],\"value\":42},{\"nested\":[{\"name\":\"x\"}],\"value\":1}]}", 404)]
+    [InlineData("$.items[?length('é') == 2].value", "{\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?length('é') == 1].value", "{\"items\":[{\"value\":42}]}", 404)]
+    [InlineData("$.items[?length(\"😀\") == 1].value", "{\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?length('') == 0].value", "{\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?length('a)b') == 3].value", "{\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?length('😀') == 1 && @.active == true].value", "{\"items\":[{\"value\":42,\"active\":false}]}", 404)]
+    [InlineData("$.items[?@.nested[?length('é') == 2 && @.active == true]].value", "{\"items\":[{\"nested\":[{\"active\":true}],\"value\":42}]}", 201)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """

@@ -7,7 +7,7 @@ namespace MockProxyGateway.Configuration;
 // A filter-local adapter over the library's normal wildcard selector. It
 // preserves the exact original candidate nodes and their locations, including
 // duplicates from selector unions, without modifying any host function registry.
-internal sealed class BoundedLengthFilterSelector(JsonPath argument, decimal expected, string comparison, string expression) : ISelector
+internal sealed class BoundedLengthFilterSelector(JsonPath? argument, int? literalLength, decimal expected, string comparison, string expression) : ISelector
 {
     private static readonly ISelector Children = JsonPath.Parse("$[*]").Segments[0].Selectors[0];
 
@@ -22,6 +22,8 @@ internal sealed class BoundedLengthFilterSelector(JsonPath argument, decimal exp
 
     internal bool MatchesCandidate(JsonNode? rootNode, JsonNode? candidate)
     {
+        if (argument is null)
+            return Matches(literalLength);
         var value = argument.Evaluate(argument.Scope == PathScope.Global ? rootNode : candidate)
             .Matches.FirstOrDefault()?.Value;
         int? length = value switch
@@ -51,7 +53,7 @@ internal sealed class BoundedLengthFilterSelector(JsonPath argument, decimal exp
         };
     }
 
-    private static int ScalarCount(string text)
+    internal static int ScalarCount(string text)
     {
         var count = 0;
         foreach (var rune in text.EnumerateRunes())

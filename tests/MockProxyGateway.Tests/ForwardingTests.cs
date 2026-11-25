@@ -680,6 +680,9 @@ public sealed class ForwardingTests
     [InlineData("$.items[?length(@.name) == 2]", false, 202, 0)]
     [InlineData("$.items[?length(@.name) == 1]", false, 201, 1)]
     [InlineData("$.items[?length($.label) == 2]", true, 400, 0)]
+    [InlineData("$.items[?length('é') == 2]", false, 202, 0)]
+    [InlineData("$.items[?length('é') == 1]", false, 201, 1)]
+    [InlineData("$.items[?length(\"😀\") == 1]", false, 202, 0)]
     public async Task LengthFilterIsScalarCorrectAndBudgetedWithoutGlobalRegistration(string selector, bool large, int status, int calls)
     {
         Assert.True(Json.Path.FunctionRepository.TryGet("length", out var originalFunction));
