@@ -113,8 +113,12 @@ are independent of quantifiers. JSONPath supports bounded RFC 9535 selectors:
 the product of selector counts across outer segments and any predicate query
 cannot exceed four. A maximum
 of two outer recursive descents is allowed. Up to two
-outer filters (not in selector unions) are supported, for example `$.items[?@.active == true].value` or
-`$.items[?(@.price >= 10 && @.available) || @.override == true]`.
+outer filters are supported, including within selector unions, for example
+`$.items[?@.active == true].value`, `$.items[0,?@.active == true]` or
+`$.items[?@.active,?@.override]`. The existing union-product limit also applies
+to mixed filter unions. Each filter expression is checked independently and
+duplicate selections are preserved by the library. Nested-filter expressions
+remain excluded from unions.
 Filters accept relative and root paths, scalar literals, the six comparison
 operators, existence (including wildcard and slice paths), AND/OR/NOT and up to eight
 nested logical levels. `count(@.items[*])`, `value(@.items[0:1])` and

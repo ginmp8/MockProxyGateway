@@ -203,8 +203,9 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 var filters = segment.Selectors.Count(x => x is FilterSelector);
                 if (filters != 0)
                 {
-                    if (++filterCount > 2 || filters != 1 || segment.Selectors.Length != 1)
-                        throw Invalid("At most two non-union JSONPath filters are supported.");
+                    filterCount += filters;
+                    if (filterCount > 2)
+                        throw Invalid("At most two outer JSONPath filters are supported.");
                     hasFilter = true;
                 }
                 if (recursiveCount > (segment.IsRecursive ? 1 : 0))

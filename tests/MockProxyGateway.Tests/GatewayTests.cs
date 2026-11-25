@@ -250,6 +250,10 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"header\",\"key\":\"x\",\"operator\":\"regex\",\"value\":\"(\"}")]
     [InlineData("{\"all\":[]}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[0,1,2,3,?@.active]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.active,?@.override,?@.other]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[0,?@.nested[?@.active]]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[0,?match(@.name, 'x')]\",\"operator\":\"exists\"}")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """
@@ -406,6 +410,15 @@ public sealed class GatewayTests
     [InlineData("$.items[?count($..nested..tag) == 1].value", "{\"nested\":{\"other\":1},\"items\":[{\"value\":42}]}", 404)]
     [InlineData("$..items[?@.active == true]..value", "{\"items\":[{\"active\":true,\"value\":42}]}", 201)]
     [InlineData("$..items[?@.active == true]..value", "{\"items\":[{\"active\":false,\"value\":42}]}", 404)]
+    [InlineData("$.items[0,?@.active == true].value", "{\"items\":[{\"active\":false,\"value\":1},{\"active\":true,\"value\":42}]}", 201)]
+    [InlineData("$.items[0,?@.active == true].value", "{\"items\":[{\"active\":false,\"value\":1},{\"active\":false,\"value\":42}]}", 404)]
+    [InlineData("$.items[?@.active == true,0].value", "{\"items\":[{\"active\":false,\"value\":42},{\"active\":false,\"value\":1}]}", 201)]
+    [InlineData("$.items[?@.active == true,0].value", "{\"items\":[{\"active\":false,\"value\":1},{\"active\":false,\"value\":42}]}", 404)]
+    [InlineData("$.items[0,?!@.disabled && @.active].value", "{\"items\":[{\"value\":1},{\"active\":true,\"value\":42}]}", 201)]
+    [InlineData("$.items[0,?!@.disabled && @.active].value", "{\"items\":[{\"value\":1},{\"value\":42}]}", 404)]
+    [InlineData("$.items[?@.active == true,?@.override == true].value", "{\"items\":[{\"active\":false,\"override\":true,\"value\":42}]}", 201)]
+    [InlineData("$.items[?@.active == true,?@.override == true].value", "{\"items\":[{\"active\":false,\"override\":false,\"value\":42}]}", 404)]
+    [InlineData("$.items[?@.active == true,?@.override == true].value", "{\"items\":[{\"active\":true,\"override\":false,\"value\":42}]}", 201)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """

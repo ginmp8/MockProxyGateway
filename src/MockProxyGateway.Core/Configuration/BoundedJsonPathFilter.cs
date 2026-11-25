@@ -25,12 +25,24 @@ internal static class BoundedJsonPathFilter
                 ReadQuoted(path, ref index);
                 continue;
             }
-            if (path[index++] == '[' && Take(path, ref index, "?"))
+            if (path[index++] != '[')
+                continue;
+
+            // The library has already parsed this segment. Visit each selector
+            // so a filter after a name/index/slice is checked as rigorously as
+            // the first selector, and NOT normalization never skips a union arm.
+            do
             {
-                ReadExpression(path, ref index, 0, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, ref hasRepeatedPredicateDescent, filterDepth);
-                Require(path, ref index, "]");
-                foundFilter = true;
+                if (Take(path, ref index, "?"))
+                {
+                    ReadExpression(path, ref index, 0, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, ref hasRepeatedPredicateDescent, filterDepth);
+                    foundFilter = true;
+                }
+                else
+                    _ = ReadSelector(path, ref index);
             }
+            while (Take(path, ref index, ","));
+            Require(path, ref index, "]");
         }
         if (!foundFilter)
             throw Invalid();
