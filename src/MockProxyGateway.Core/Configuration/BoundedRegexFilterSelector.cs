@@ -28,6 +28,7 @@ internal sealed class BoundedRegexFilterSelector(JsonPath argument, Regex regex,
         var mapped = new StringBuilder();
         var index = 0;
         var depth = 0;
+        var repetitionBudget = 256;
         while (index < pattern.Length)
         {
             var current = pattern[index];
@@ -114,7 +115,7 @@ internal sealed class BoundedRegexFilterSelector(JsonPath argument, Regex regex,
             if (index < pattern.Length && pattern[index] is '*' or '+' or '?')
                 mapped.Append(pattern[index++]);
             else if (index < pattern.Length && pattern[index] == '{')
-                ReadRangeQuantifier(pattern, ref index, mapped);
+                ReadRangeQuantifier(pattern, ref index, mapped, ref repetitionBudget);
         }
         if (depth != 0)
             throw Invalid();
@@ -124,19 +125,32 @@ internal sealed class BoundedRegexFilterSelector(JsonPath argument, Regex regex,
             TimeSpan.FromMilliseconds(25));
     }
 
-    private static void ReadRangeQuantifier(string pattern, ref int index, StringBuilder mapped)
+    private static void ReadRangeQuantifier(string pattern, ref int index, StringBuilder mapped, ref int repetitionBudget)
     {
         var start = index++;
         var minimum = ReadRepeatBound(pattern, ref index);
+        var expansion = minimum;
         if (index < pattern.Length && pattern[index] == ',')
         {
             index++;
-            if (index < pattern.Length && char.IsAsciiDigit(pattern[index]) &&
-                ReadRepeatBound(pattern, ref index) < minimum)
-                throw Invalid();
+            if (index < pattern.Length && char.IsAsciiDigit(pattern[index]))
+            {
+                expansion = ReadRepeatBound(pattern, ref index);
+                if (expansion < minimum)
+                    throw Invalid();
+            }
+            else
+                expansion++;
         }
         if (index >= pattern.Length || pattern[index++] != '}')
             throw Invalid();
+
+        // Conservatively bound the product of all explicit repetitions before
+        // handing the translated pattern to the symbolic regex compiler.
+        var factor = Math.Max(1, expansion);
+        if (factor > repetitionBudget)
+            throw Invalid();
+        repetitionBudget /= factor;
         mapped.Append(pattern.AsSpan(start, index - start));
     }
 

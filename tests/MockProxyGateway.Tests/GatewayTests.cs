@@ -273,6 +273,8 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?length(@.name)]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(@.name, '[A-B-C]')]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(@.name, '[Z-A]')]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(@.name, '((x{64}){64}){64}')]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(@.name, 'x{32}y{32}')]\",\"operator\":\"exists\"}")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """
@@ -493,6 +495,8 @@ public sealed class GatewayTests
     [InlineData("$.items[?match(@.name, 'a|')].value", "{\"items\":[{\"name\":\"\",\"value\":42}]}", 201)]
     [InlineData("$.items[?match(@.name, '(a|b)c')].value", "{\"items\":[{\"name\":\"bc\",\"value\":42}]}", 201)]
     [InlineData("$.items[?match(@.name, '(a|b)c')].value", "{\"items\":[{\"name\":\"acx\",\"value\":42}]}", 404)]
+    [InlineData("$.items[?match(@.name, '(x{2}){3}')].value", "{\"items\":[{\"name\":\"xxxxxx\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?match(@.name, '(x{2}){3}')].value", "{\"items\":[{\"name\":\"xxxxx\",\"value\":42}]}", 404)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """
