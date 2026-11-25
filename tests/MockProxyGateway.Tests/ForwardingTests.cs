@@ -273,13 +273,20 @@ public sealed class ForwardingTests
         using var client = new System.Net.Sockets.TcpClient();
         await client.ConnectAsync(address.Host, address.Port, ct);
         using var wire = client.GetStream();
-        var headers = Encoding.ASCII.GetBytes("POST /mock-proxy/stream/upload HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/octet-stream\r\nContent-Length: 4\r\nConnection: close\r\n\r\n");
+        // Exceed typical HTTP/TCP copy buffers and the configured JSON inspection limit.
+        // A streaming transport may coalesce small writes; the contract does not promise per-byte flushing.
+        const int initialBytes = 131_072;
+        const int totalBytes = 1_179_648;
+        var payload = new byte[totalBytes];
+        for (var i = 0; i < payload.Length; i++)
+            payload[i] = (byte)(i % 256);
+        var headers = Encoding.ASCII.GetBytes($"POST /mock-proxy/stream/upload HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/octet-stream\r\nContent-Length: {totalBytes}\r\nConnection: close\r\n\r\n");
         await wire.WriteAsync(headers, ct);
-        await wire.WriteAsync(new byte[] { 0xff }, ct);
-        // An eager body buffer would deadlock this handshake. Only send the rest after upstream sees byte one.
+        await wire.WriteAsync(payload.AsMemory(0, initialBytes), ct);
+        // An eager whole-body buffer would deadlock this handshake.
         await firstByte.Task.WaitAsync(TimeSpan.FromSeconds(8), ct);
-        await wire.WriteAsync(new byte[] { 0x00, 0x01, 0xfe }, ct);
-        Assert.Equal(new byte[] { 0xff, 0x00, 0x01, 0xfe }, await captured.Task.WaitAsync(TimeSpan.FromSeconds(8), ct));
+        await wire.WriteAsync(payload.AsMemory(initialBytes), ct);
+        Assert.Equal(payload, await captured.Task.WaitAsync(TimeSpan.FromSeconds(8), ct));
         using var reader = new StreamReader(wire, Encoding.ASCII);
         Assert.Contains("201", (await reader.ReadLineAsync(ct)) ?? "", StringComparison.Ordinal);
     }
