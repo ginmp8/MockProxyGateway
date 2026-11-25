@@ -122,8 +122,11 @@ internal sealed partial class GatewayRuntime : IDisposable
         finally
         {
             if (_logger.IsEnabled(LogLevel.Information))
+            {
+                var duration = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
                 Completed(_logger, alias, ruleId, action, context.Response.StatusCode, snapshot.Version,
-                    Stopwatch.GetElapsedTime(started).TotalMilliseconds, context.TraceIdentifier);
+                    duration, context.TraceIdentifier);
+            }
             _concurrency.Release();
         }
     }

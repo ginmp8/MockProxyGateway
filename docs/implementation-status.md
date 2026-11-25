@@ -1,44 +1,16 @@
-# Implementation checkpoint
+# Implementation status
 
-This branch is in active development for issue #1. It is not release-ready.
+Initial implementation is tracked in issue #1 and draft PR #2. This document describes the current source, not a release acceptance certificate.
 
-This increment adds Core middleware, an optional host, initial integration tests,
-central build configuration, rule compilation/resolution, local mock responses,
-destination-restricted YARP forwarding and immutable rule-document polling.
-No runtime or package validation is claimed.
+- Core middleware and thin optional host; explicit non-production activation and configurable prefix.
+- Versioned rules, deterministic endpoint and rule precedence, conditional matching, mock responses and destination-restricted YARP forwarding.
+- Typed dedicated file, single JSON-file inline rules, serialized configuration and programmatic providers; all share semantic validation. Polling swaps a validated snapshot atomically, retaining the last valid version when reload fails.
+- Trusted fixture files captured during snapshot compilation; no untrusted writes to fixture roots.
+- Authority and resolved IP allowlists, checked socket destination, disabled redirects and system proxy, credential filtering and bounded body evaluation. Continue to enforce host-specific egress and logging policies.
+- Bounded JSONPath subset (simple property, array index and array wildcard). Unrestricted selectors are not supported. Full raw-target encoding preservation, streaming behavior and diagnostic privacy still require executable evidence.
+- .NET 10 centralized build, real CI-generated lockfiles, integration tests, rule schema, package-only consumer and Docker smoke workflows.
+- JsonPath.Net 2.2.0 is selected as the MIT-licensed binary rather than the 3.x maintenance-fee EULA. Final transitive licensing and vulnerability gates remain.
 
-## Current boundaries
+The runner has proven locked restore, but the build has been blocked by CA1873 in gateway completion logging. The latest fix computes elapsed duration only when logging is enabled and passes the precomputed value. Check the exact feature HEAD CI for the actual result. No tests, package smoke or Docker smoke are claimed as passing until they execute successfully.
 
-- Explicit non-production middleware opt-in; no mandatory identity infrastructure.
-- Proxy authorities must be explicitly configured (AllowedDestinationAuthorities).
-  Non-loopback DNS results must match AllowedDestinationAddresses. Connections
-  use a checked IP, not a second name lookup. Literal HTTP loopback is allowed
-  only with explicit AllowLoopbackForTests in Development or Testing. Deployment
-  network egress policy is still required.
-- Known credential headers are removed unless explicitly permitted for the
-  destination; custom credential headers require explicit removeHeaders review.
-  No automatic redirects or fallback.
-- Matching paths are case-sensitive; trailing slash is equivalent for rule
-  selection. Rewrite is path-only.
-- Initial JSONPath subset: bounded property, array index and wildcard selectors.
-  Recursive/filter/function expressions are rejected. Numeric range comparisons
-  use decimal and reject unsupported range.
-- File, serialized JSON configuration and typed programmatic document provider
-  share validation. Inline nested source, arbitrary provider parity and fixtures
-  remain unfinished.
-- Default standalone host is disabled. For a local demo set
-  ASPNETCORE_ENVIRONMENT=Development and MockProxyGateway__Enabled=true,
-  then request GET /mock-proxy/demo/health.
-
-## Remaining gates
-
-The available sandbox lacks dotnet and Docker and could not resolve GitHub DNS.
-The first CI invocation must produce authentic lockfiles; the committed-lockfile
-gate intentionally fails until they are checked in. Build/test results, complete
-scenario and security tests using real local upstream, package-only consumption,
-Docker smoke tests and JSON Schema remain unverified. No criterion is marked
-complete from unexecuted tests.
-
-JsonPath.Net 2.2.0 is the MIT-licensed candidate rather than the 3.x binary with
-maintenance-fee EULA. Confirm resolved dependency licenses and audit before
-release. All packages are centrally pinned; no transitive audit is claimed yet.
+Use the issue and PR checkpoint to track all eighteen acceptance criteria. No package publication, merge, tag or release is authorized.

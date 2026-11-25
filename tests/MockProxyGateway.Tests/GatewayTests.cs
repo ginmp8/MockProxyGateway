@@ -125,6 +125,64 @@ public sealed class GatewayTests
         Assert.Equal("updated", await fixture.Client.GetStringAsync("/mock-proxy/compliance/health", ct));
     }
 
+    [Theory]
+    [InlineData("equals", "42", "{\"value\":42}", true)]
+    [InlineData("equals", "42", "{\"value\":\"42\"}", false)]
+    [InlineData("notEquals", "\"a\"", "{}", false)]
+    [InlineData("contains", "\"bc\"", "{\"value\":\"abcd\"}", true)]
+    [InlineData("startsWith", "\"ab\"", "{\"value\":\"abcd\"}", true)]
+    [InlineData("endsWith", "\"cd\"", "{\"value\":\"abcd\"}", true)]
+    [InlineData("in", "[1,2]", "{\"value\":2}", true)]
+    [InlineData("notIn", "[1,2]", "{\"value\":3}", true)]
+    [InlineData("regex", "\"^a[0-9]+$\"", "{\"value\":\"a42\"}", true)]
+    [InlineData("greaterThan", "4", "{\"value\":5}", true)]
+    [InlineData("greaterThanOrEqual", "5", "{\"value\":5}", true)]
+    [InlineData("lessThan", "6", "{\"value\":5}", true)]
+    [InlineData("lessThanOrEqual", "5", "{\"value\":5}", true)]
+    [InlineData("between", "[4,6]", "{\"value\":5}", true)]
+    [InlineData("jsonEquals", "{\"b\":2,\"a\":1}", "{\"value\":{\"a\":1,\"b\":2}}", true)]
+    public async Task TypedOperatorBehavior(string operation, string operand, string body, bool matches)
+    {
+        var rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
+              {"id":"operator","priority":1,
+               "conditions":{"source":"body","key":"$.value","operator":"OPERATOR","value":OPERAND},
+               "action":{"mode":"mock","response":{"statusCode":201}}}
+            ],"default":{"mode":"mock","response":{"statusCode":404}}}}}
+            """.Replace("OPERATOR", operation, StringComparison.Ordinal).Replace("OPERAND", operand, StringComparison.Ordinal);
+        await using var fixture = await Fixture.StartAsync(rules);
+        using var content = new StringContent(body, Encoding.UTF8, "application/json");
+        using var response = await fixture.Client.PostAsync("/mock-proxy/test/check", content, TestContext.Current.CancellationToken);
+        Assert.Equal(matches ? HttpStatusCode.Created : HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("any", "a", true)]
+    [InlineData("all", "a", false)]
+    [InlineData("none", "z", true)]
+    public async Task MultiValueQueryQuantifiers(string quantifier, string value, bool matches)
+    {
+        var rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
+              {"id":"multi","priority":1,
+               "conditions":{"source":"query","key":"v","operator":"equals","quantifier":"QUANTIFIER","value":"VALUE"},
+               "action":{"mode":"mock","response":{"statusCode":201}}}
+            ],"default":{"mode":"mock","response":{"statusCode":404}}}}}
+            """.Replace("QUANTIFIER", quantifier, StringComparison.Ordinal).Replace("VALUE", value, StringComparison.Ordinal);
+        await using var fixture = await Fixture.StartAsync(rules);
+        using var response = await fixture.Client.GetAsync("/mock-proxy/test/check?v=a&v=b", TestContext.Current.CancellationToken);
+        Assert.Equal(matches ? HttpStatusCode.Created : HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task OversizedInspectedBodyIsRejectedBeforeAnyAction()
+    {
+        await using var fixture = await Fixture.StartAsync(Rules);
+        using var body = new StringContent(new string('x', 1_048_577), Encoding.UTF8, "application/json");
+        using var response = await fixture.Client.PostAsync("/mock-proxy/compliance/analysis", body, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+    }
+
     private sealed class Fixture(WebApplication app, HttpClient client, string directory) : IAsyncDisposable
     {
         public HttpClient Client { get; } = client;

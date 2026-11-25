@@ -11,6 +11,8 @@ internal static class ProxyDestinationPolicy
             !string.IsNullOrEmpty(uri.Fragment) || !GatewayPaths.IsSafe(uri.AbsolutePath) ||
             !options.AllowedDestinationAuthorities.Contains(uri.Authority, StringComparer.OrdinalIgnoreCase))
             return false;
+        if (IPAddress.TryParse(uri.Host.Trim('[', ']'), out var literal) && !IsApproved(literal, options))
+            return false;
         return uri.Scheme == Uri.UriSchemeHttps ||
             (uri.Scheme == Uri.UriSchemeHttp && options.AllowLoopbackForTests &&
                 IPAddress.TryParse(uri.Host.Trim('[', ']'), out var address) && IPAddress.IsLoopback(address));
@@ -23,7 +25,8 @@ internal static class ProxyDestinationPolicy
         if (IPAddress.IsLoopback(address))
             return options.AllowLoopbackForTests;
         if (address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any) ||
-            address.IsIPv6LinkLocal || address.IsIPv6Multicast || address.IsIPv6SiteLocal)
+            address.IsIPv6LinkLocal || address.IsIPv6Multicast || address.IsIPv6SiteLocal ||
+            address.Equals(IPAddress.Parse("fd00:ec2::254")))
             return false;
         if (address.AddressFamily == AddressFamily.InterNetwork)
         {
