@@ -218,7 +218,9 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             {
                 if (recursive)
                     throw Invalid("JSONPath filters cannot be combined with recursive descent.");
-                BoundedJsonPathFilter.Validate(key);
+                var normalized = BoundedJsonPathFilter.Normalize(key);
+                if (!JsonPath.TryParse(normalized, out jsonPath))
+                    throw Invalid("Invalid bounded JSONPath filter.");
                 // With no descent or nested filter, each candidate subtree is disjoint
                 // except for the bounded union multiplicity. Charge a conservative
                 // upper bound on predicate operations per node and input byte.

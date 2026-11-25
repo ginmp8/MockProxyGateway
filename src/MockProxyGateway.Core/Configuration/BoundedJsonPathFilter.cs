@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 
 namespace MockProxyGateway.Configuration;
@@ -7,9 +8,10 @@ namespace MockProxyGateway.Configuration;
 // It examines the original expression, not a potentially lossy AST rendering.
 internal static class BoundedJsonPathFilter
 {
-    internal static void Validate(string path)
+    internal static string Normalize(string path)
     {
         var index = 0;
+        var grouping = new List<(int Offset, char Character)>();
         while (index < path.Length)
         {
             if (path[index] is '\'' or '"')
@@ -19,33 +21,44 @@ internal static class BoundedJsonPathFilter
             }
             if (path[index++] == '[' && Take(path, ref index, "?"))
             {
-                ReadExpression(path, ref index, 0);
+                ReadExpression(path, ref index, 0, grouping);
                 Require(path, ref index, "]");
-                return;
+                if (grouping.Count == 0)
+                    return path;
+                var normalized = new StringBuilder(path);
+                foreach (var (offset, character) in grouping.OrderByDescending(x => x.Offset))
+                    normalized.Insert(offset, character);
+                return normalized.ToString();
             }
         }
         throw Invalid();
     }
 
-    private static void ReadExpression(string path, ref int index, int depth)
+    private static void ReadExpression(string path, ref int index, int depth, List<(int Offset, char Character)> grouping)
     {
-        ReadTerm(path, ref index, depth);
+        ReadTerm(path, ref index, depth, grouping);
         while (Take(path, ref index, "&&") || Take(path, ref index, "||"))
-            ReadTerm(path, ref index, depth);
+            ReadTerm(path, ref index, depth, grouping);
     }
 
-    private static void ReadTerm(string path, ref int index, int depth)
+    private static void ReadTerm(string path, ref int index, int depth, List<(int Offset, char Character)> grouping)
     {
         if (depth > 8)
             throw Invalid();
+        SkipWhitespace(path, ref index);
+        var termStart = index;
         if (Take(path, ref index, "!"))
         {
-            ReadTerm(path, ref index, depth + 1);
+            ReadTerm(path, ref index, depth + 1, grouping);
+            // The pinned unary parser consumes a complete logical expression.
+            // Explicitly group the negated term to preserve RFC NOT precedence.
+            grouping.Add((termStart, '('));
+            grouping.Add((index, ')'));
             return;
         }
         if (Take(path, ref index, "("))
         {
-            ReadExpression(path, ref index, depth + 1);
+            ReadExpression(path, ref index, depth + 1, grouping);
             Require(path, ref index, ")");
             return;
         }

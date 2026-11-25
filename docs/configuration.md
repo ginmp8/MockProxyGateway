@@ -115,7 +115,8 @@ of one recursive descent is allowed. One filter (not in a selector union) is
 supported, for example `$.items[?@.active == true].value` or
 `$.items[?(@.price >= 10 && @.available) || @.override == true]`.
 Filters accept singular relative paths, scalar literals, the six comparison
-operators, existence, AND/OR/NOT and up to eight nested logical levels. Functions,
+operators, existence, AND/OR/NOT and up to eight nested logical levels. Negated
+terms are explicitly grouped before library evaluation to preserve NOT precedence. Functions,
 root references, nested filters, non-singular predicate paths and filters
 combined with recursive descent are rejected.
 The request budget is charged before evaluation for body nodes multiplied by

@@ -545,6 +545,45 @@ public sealed class ForwardingTests
     }
 
     [Fact]
+    public async Task FilterInspectionSelectsMockOrRealAndFailsClosedBeforeAnyAdditionalCall()
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"high-score","priority":1,"conditions":{"source":"body","key":"$.items[?@.score >= 10]","operator":"exists"},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        await using var gateway = await StartGatewayAsync(rules, upstream);
+        using var client = gateway.GetTestClient();
+        var ct = TestContext.Current.CancellationToken;
+
+        using var mockBody = new StringContent("{\"items\":[{\"score\":12}]}", Encoding.UTF8, "application/json");
+        using var mock = await client.PostAsync("/mock-proxy/a/check", mockBody, ct);
+        Assert.Equal(HttpStatusCode.Accepted, mock.StatusCode);
+        Assert.Empty(upstream.Requests);
+
+        const string unmatched = "{ \"items\" : [{ \"score\" : 9 }] }";
+        using var realBody = new StringContent(unmatched, Encoding.UTF8, "application/json");
+        using var real = await client.PostAsync("/mock-proxy/a/check?keep=encoded%20value", realBody, ct);
+        Assert.Equal(HttpStatusCode.Created, real.StatusCode);
+        Assert.Equal(unmatched, Assert.Single(upstream.Requests).Body);
+
+        using var unsupportedNumber = new StringContent("{\"items\":[{\"score\":1e1000}]}", Encoding.UTF8, "application/json");
+        using var rejected = await client.PostAsync("/mock-proxy/a/check", unsupportedNumber, ct);
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        Assert.Single(upstream.Requests);
+
+        var oversizedWork = "{\"items\":[" + string.Join(',', Enumerable.Repeat("{\"score\":12}", 4000)) + "]}";
+        using var costlyBody = new StringContent(oversizedWork, Encoding.UTF8, "application/json");
+        using var costly = await client.PostAsync("/mock-proxy/a/check", costlyBody, ct);
+        Assert.Equal(HttpStatusCode.BadRequest, costly.StatusCode);
+        Assert.Single(upstream.Requests);
+    }
+
+    [Fact]
     public async Task OptionalNamedPolicyProtectsRealForwardingAndPreservesSeparateHostPolicy()
     {
         await using var upstream = await Upstream.StartAsync();
