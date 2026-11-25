@@ -457,6 +457,30 @@ public sealed class ConfigurationTests
     }
 
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConflictingExplicitRuleSourcesAreRejected(bool externalConfiguration)
+    {
+        var builder = TestHosting.CreateBuilder();
+        if (externalConfiguration)
+        {
+            var external = new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?> { ["RulesJson"] = Rules }).Build();
+            builder.Services.AddMockProxyGateway(external, o => o.RulesJson = Rules);
+        }
+        else
+        {
+            builder.Services.AddMockProxyGateway(o =>
+            {
+                o.RulesJson = Rules;
+                o.ProgrammaticRules = () => JsonElement.Parse(Rules);
+            });
+        }
+        await using var app = builder.Build();
+        Assert.Throws<InvalidOperationException>(() => app.UseMockProxyGateway());
+    }
+
     [Fact]
     public async Task ExpiryUsesHostTimeProviderAtTheExactBoundaryWithoutReload()
     {

@@ -58,7 +58,11 @@ internal sealed partial class RuleStore : IAsyncDisposable
     {
         byte[] bytes;
         if (_options.ProgrammaticRules is not null)
+        {
+            if (_explicitSerialized is not null)
+                throw new InvalidOperationException("Conflicting explicit rule sources.");
             bytes = ReadProgrammatic();
+        }
         else if (string.Equals(_options.RuleSource, "Inline", StringComparison.OrdinalIgnoreCase))
             bytes = ReadInline();
         else if (string.Equals(_options.RuleSource, "Configuration", StringComparison.OrdinalIgnoreCase))

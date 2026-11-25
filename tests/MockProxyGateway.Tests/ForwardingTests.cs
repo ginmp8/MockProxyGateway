@@ -119,6 +119,7 @@ public sealed class ForwardingTests
     public async Task AllEndToEndHeadersReachSelectedUpstreamWithoutConfiguration(string scenario, string expectedTarget)
     {
         await using var upstream = await Upstream.StartAsync();
+        await using var alternate = await Upstream.StartAsync();
         var json = JsonNode.Parse("""
             {"schemaVersion":1,"destinations":{"primary":{"baseUrl":"http://127.0.0.1/"},
               "alternate":{"baseUrl":"http://127.0.0.1/","removeQuery":["simulate"]}},
@@ -129,8 +130,9 @@ public sealed class ForwardingTests
                  "action":{"mode":"mock","response":{"statusCode":200}}}]}}}
             """)!;
         json["destinations"]!["primary"]!["baseUrl"] = upstream.BaseUrl + "primary/";
-        json["destinations"]!["alternate"]!["baseUrl"] = upstream.BaseUrl + "alternate/";
-        await using var gateway = await StartGatewayAsync(json, upstream);
+        json["destinations"]!["alternate"]!["baseUrl"] = alternate.BaseUrl + "alternate/";
+        await using var gateway = await StartGatewayAsync(json, upstream, configure: options =>
+            options.AllowedDestinationAuthorities = [new Uri(upstream.BaseUrl).Authority, new Uri(alternate.BaseUrl).Authority]);
         using var client = gateway.GetTestClient();
         var ct = TestContext.Current.CancellationToken;
         using var request = CreateRequest("GET", "/mock-proxy/a/resource?simulate=remove&business=keep", null, scenario);
@@ -158,7 +160,10 @@ public sealed class ForwardingTests
 
         using var response = await client.SendAsync(request, ct);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var actual = Assert.Single(upstream.Requests);
+        var selected = scenario == "alternate" ? alternate : upstream;
+        var unselected = scenario == "alternate" ? upstream : alternate;
+        var actual = Assert.Single(selected.Requests);
+        Assert.Empty(unselected.Requests);
         Assert.Equal(expectedTarget, actual.Target);
         foreach (var header in expected)
             Assert.Equal(header.Value, actual.Headers[header.Key]);
@@ -166,17 +171,23 @@ public sealed class ForwardingTests
         Assert.Equal(MultipleHeaderValues, actual.MultipleValues);
         Assert.False(actual.Headers.ContainsKey("Proxy-Authorization"));
         Assert.False(actual.Headers.ContainsKey("Connection"));
-        Assert.Equal(new Uri(upstream.BaseUrl).Authority, actual.Host);
+        Assert.Equal(new Uri(selected.BaseUrl).Authority, actual.Host);
 
         using var mock = CreateRequest("GET", "/mock-proxy/a/resource", null, "mock");
         Assert.True(mock.Headers.TryAddWithoutValidation("Authorization", "Bearer synthetic-token"));
         using var mockResponse = await client.SendAsync(mock, ct);
         Assert.Equal(HttpStatusCode.OK, mockResponse.StatusCode);
-        Assert.Single(upstream.Requests);
+        Assert.Single(selected.Requests);
+        Assert.Empty(unselected.Requests);
 
-        using var redirect = await client.GetAsync("/mock-proxy/a/redirect", ct);
-        Assert.Equal(HttpStatusCode.Redirect, redirect.StatusCode);
-        Assert.Equal(2, upstream.Requests.Count);
+        var primaryCount = upstream.Requests.Count;
+        var alternateCount = alternate.Requests.Count;
+        using var redirect = CreateRequest("GET", "/mock-proxy/a/redirect", null, scenario);
+        using var redirectResponse = await client.SendAsync(redirect, ct);
+        Assert.Equal(HttpStatusCode.Redirect, redirectResponse.StatusCode);
+        Assert.Equal("/must-not-be-followed", redirectResponse.Headers.Location?.OriginalString);
+        Assert.Equal(primaryCount + (scenario == "default" ? 1 : 0), upstream.Requests.Count);
+        Assert.Equal(alternateCount + (scenario == "alternate" ? 1 : 0), alternate.Requests.Count);
     }
 
     [Fact]

@@ -157,9 +157,7 @@ YARP handles HTTP protocol-specific headers, and the outbound Host uses the
 registered destination authority. Each registered destination must be trusted
 with the complete end-to-end header set. Upstreams must not treat untrusted
 forwarded metadata as authenticated identity. Explicit removeQuery can still
-remove configured query controls. The former forwardCredentials, removeHeaders,
-and CredentialHeaderNames settings are removed; delete them from existing
-configuration before using this development version.
+remove configured query controls. No header policy settings are required or supported.
 The YARP logger used by this gateway is isolated; structured gateway diagnostics
 report service, rule, action, status, version, duration, correlation and failure
 category without payloads. Host HTTP logging, .NET tracing and other observability
