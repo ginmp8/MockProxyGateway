@@ -8,10 +8,12 @@ namespace MockProxyGateway.Configuration;
 // It examines the original expression, not a potentially lossy AST rendering.
 internal static class BoundedJsonPathFilter
 {
-    internal static string Normalize(string path, out bool usesRepeatedTraversal, out int maxUnionProduct)
+    internal static string Normalize(string path, out bool usesRepeatedTraversal, out int maxUnionProduct, out bool hasNestedFilter)
     {
         usesRepeatedTraversal = false;
         maxUnionProduct = 1;
+        hasNestedFilter = false;
+        const int filterDepth = 0;
         var index = 0;
         var grouping = new List<(int Offset, char Character)>();
         while (index < path.Length)
@@ -23,7 +25,7 @@ internal static class BoundedJsonPathFilter
             }
             if (path[index++] == '[' && Take(path, ref index, "?"))
             {
-                ReadExpression(path, ref index, 0, grouping, ref usesRepeatedTraversal, ref maxUnionProduct);
+                ReadExpression(path, ref index, 0, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, filterDepth);
                 Require(path, ref index, "]");
                 if (grouping.Count == 0)
                     return path;
@@ -36,14 +38,14 @@ internal static class BoundedJsonPathFilter
         throw Invalid();
     }
 
-    private static void ReadExpression(string path, ref int index, int depth, List<(int Offset, char Character)> grouping, ref bool usesRepeatedTraversal, ref int maxUnionProduct)
+    private static void ReadExpression(string path, ref int index, int depth, List<(int Offset, char Character)> grouping, ref bool usesRepeatedTraversal, ref int maxUnionProduct, ref bool hasNestedFilter, int filterDepth)
     {
-        ReadTerm(path, ref index, depth, grouping, ref usesRepeatedTraversal, ref maxUnionProduct);
+        ReadTerm(path, ref index, depth, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, filterDepth);
         while (Take(path, ref index, "&&") || Take(path, ref index, "||"))
-            ReadTerm(path, ref index, depth, grouping, ref usesRepeatedTraversal, ref maxUnionProduct);
+            ReadTerm(path, ref index, depth, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, filterDepth);
     }
 
-    private static void ReadTerm(string path, ref int index, int depth, List<(int Offset, char Character)> grouping, ref bool usesRepeatedTraversal, ref int maxUnionProduct)
+    private static void ReadTerm(string path, ref int index, int depth, List<(int Offset, char Character)> grouping, ref bool usesRepeatedTraversal, ref int maxUnionProduct, ref bool hasNestedFilter, int filterDepth)
     {
         if (depth > 8)
             throw Invalid();
@@ -51,7 +53,7 @@ internal static class BoundedJsonPathFilter
         var termStart = index;
         if (Take(path, ref index, "!"))
         {
-            ReadTerm(path, ref index, depth + 1, grouping, ref usesRepeatedTraversal, ref maxUnionProduct);
+            ReadTerm(path, ref index, depth + 1, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, filterDepth);
             // The pinned unary parser consumes a complete logical expression.
             // Explicitly group the negated term to preserve RFC NOT precedence.
             grouping.Add((termStart, '('));
@@ -60,17 +62,17 @@ internal static class BoundedJsonPathFilter
         }
         if (Take(path, ref index, "("))
         {
-            ReadExpression(path, ref index, depth + 1, grouping, ref usesRepeatedTraversal, ref maxUnionProduct);
+            ReadExpression(path, ref index, depth + 1, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, filterDepth);
             Require(path, ref index, ")");
             return;
         }
 
-        var left = ReadOperand(path, ref index, ref usesRepeatedTraversal, ref maxUnionProduct);
+        var left = ReadOperand(path, ref index, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, filterDepth);
         if (Take(path, ref index, "==") || Take(path, ref index, "!=") ||
             Take(path, ref index, "<=") || Take(path, ref index, ">=") ||
             Take(path, ref index, "<") || Take(path, ref index, ">"))
         {
-            var right = ReadOperand(path, ref index, ref usesRepeatedTraversal, ref maxUnionProduct);
+            var right = ReadOperand(path, ref index, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, filterDepth);
             if (!left.Comparable || !right.Comparable)
                 throw Invalid();
         }
@@ -80,7 +82,7 @@ internal static class BoundedJsonPathFilter
 
     // A query may be tested for existence; comparisons require a singular
     // query or a value. The pinned parser still validates full RFC syntax.
-    private static (bool Query, bool Comparable) ReadOperand(string path, ref int index, ref bool usesRepeatedTraversal, ref int maxUnionProduct)
+    private static (bool Query, bool Comparable) ReadOperand(string path, ref int index, List<(int Offset, char Character)> grouping, ref bool usesRepeatedTraversal, ref int maxUnionProduct, ref bool hasNestedFilter, int filterDepth)
     {
         SkipWhitespace(path, ref index);
         if (index >= path.Length)
@@ -89,7 +91,7 @@ internal static class BoundedJsonPathFilter
         {
             var root = path[index++] == '$';
             usesRepeatedTraversal |= root;
-            var singular = ReadSegments(path, ref index, ref usesRepeatedTraversal, ref maxUnionProduct);
+            var singular = ReadSegments(path, ref index, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, filterDepth);
             return (true, singular);
         }
         // These built-ins have bounded work on a nodelist.
@@ -102,7 +104,7 @@ internal static class BoundedJsonPathFilter
             if (index >= path.Length || path[index] is not ('@' or '$'))
                 throw Invalid();
             usesRepeatedTraversal |= path[index++] == '$';
-            ReadSegments(path, ref index, ref usesRepeatedTraversal, ref maxUnionProduct);
+            ReadSegments(path, ref index, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, filterDepth);
             Require(path, ref index, ")");
             return (false, true);
         }
@@ -124,7 +126,7 @@ internal static class BoundedJsonPathFilter
         return (false, true);
     }
 
-    private static bool ReadSegments(string path, ref int index, ref bool usesRepeatedTraversal, ref int maxUnionProduct)
+    private static bool ReadSegments(string path, ref int index, List<(int Offset, char Character)> grouping, ref bool usesRepeatedTraversal, ref int maxUnionProduct, ref bool hasNestedFilter, int filterDepth)
     {
         var singular = true;
         var unionProduct = 1;
@@ -164,6 +166,20 @@ internal static class BoundedJsonPathFilter
             else if (path[index] == '[')
             {
                 index++;
+                if (Take(path, ref index, "?"))
+                {
+                    // Admit one nested filter with a relative, non-overlapping
+                    // query. The compiler excludes root references, unions and
+                    // descent from any expression containing this nested filter.
+                    if (filterDepth != 0 || hasNestedFilter)
+                        throw Invalid();
+                    hasNestedFilter = true;
+                    ReadExpression(path, ref index, 0, grouping, ref usesRepeatedTraversal,
+                        ref maxUnionProduct, ref hasNestedFilter, filterDepth + 1);
+                    Require(path, ref index, "]");
+                    singular = false;
+                    continue;
+                }
                 var selectors = 1;
                 singular &= ReadSelector(path, ref index);
                 while (Take(path, ref index, ","))

@@ -126,15 +126,18 @@ Root queries receive the separate repeated-root work charge even inside function
 Negated terms are explicitly grouped before library evaluation to preserve NOT
 precedence. One outer recursive descent may precede, follow or contain the
 single filter. A predicate query may contain one descent, such as
-`@..tag` or `count(@..tag)`; such queries are non-singular. Nested filters,
-other functions and repeated descent within a query are rejected. The locked JsonPath.Net version is 2.2.0 (MIT). `length()` is not admitted
+`@..tag` or `count(@..tag)`; such queries are non-singular. One nested relative filter inside the outer
+predicate is admitted (e.g. `$.items[?@.nested[?@.active == true]]`), including
+`count()` and `value()` over the nested results. Expressions containing a nested
+filter cannot contain root references inside predicates, unions or recursive descent;
+additional nested levels, other functions and repeated descent remain rejected. The locked JsonPath.Net version is 2.2.0 (MIT). `length()` is not admitted
 until RFC-correct Unicode scalar counting and bounded evaluation are verified
 against the actual locked dependency.
 The request budget is charged before evaluation for body nodes multiplied by
 the union product; when descent is present, the charge also accounts for
 descendant traversal and every subsequent segment. Filters conservatively
 charge for predicate length, body nodes and body bytes before evaluation;
-root references and any descent combined with filters additionally charge a
+root references, nested filters and any descent combined with filters additionally charge a
 worst-case whole-input traversal and comparison for every possible candidate;
 they also validate all numeric values in the inspected body once before the
 first filter, rejecting values that cannot be represented exactly as decimals.

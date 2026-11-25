@@ -590,6 +590,32 @@ public sealed class ForwardingTests
         Assert.Single(upstream.Requests);
     }
 
+    [Fact]
+    public async Task NestedRelativeFilterSelectsMockOrRealWithoutExtraOutboundCalls()
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"nested","priority":1,"conditions":{"source":"body","key":"$.items[?@.nested[?@.active == true]]","operator":"exists"},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        await using var gateway = await StartGatewayAsync(rules, upstream);
+        using var client = gateway.GetTestClient();
+        var ct = TestContext.Current.CancellationToken;
+        using var matched = new StringContent("{\"items\":[{\"nested\":[{\"active\":true}]}]}", Encoding.UTF8, "application/json");
+        using var mock = await client.PostAsync("/mock-proxy/a/check", matched, ct);
+        Assert.Equal(HttpStatusCode.Accepted, mock.StatusCode);
+        Assert.Empty(upstream.Requests);
+        const string unmatched = "{ \"items\" : [{ \"nested\" : [{ \"active\" : false }] }] }";
+        using var realBody = new StringContent(unmatched, Encoding.UTF8, "application/json");
+        using var real = await client.PostAsync("/mock-proxy/a/check", realBody, ct);
+        Assert.Equal(HttpStatusCode.Created, real.StatusCode);
+        Assert.Equal(unmatched, Assert.Single(upstream.Requests).Body);
+    }
+
     [Theory]
     [InlineData("$.items[?@.score >= 10]", 201, 1)]
     [InlineData("$.items[?@.score >= $.min]", 400, 0)]
@@ -648,6 +674,7 @@ public sealed class ForwardingTests
     [InlineData("$..items[?@.score >= 10]", 400, 0)]
     [InlineData("$.items[?@..score]", 400, 0)]
     [InlineData("$.items[?count(@..score) == 2]", 400, 0)]
+    [InlineData("$.items[?@.nested[?@.score >= 10]]", 400, 0)]
     public async Task DescentFilterOverlapIsChargedBeforeForwarding(string selector, int expectedStatus, int expectedCalls)
     {
         await using var upstream = await Upstream.StartAsync();
