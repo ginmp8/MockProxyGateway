@@ -106,7 +106,7 @@ The host owns operational settings. The optional `MockProxyGateway` section can 
 }
 ```
 
-These are illustrative operational settings, not measured performance recommendations. `ProxyTimeoutSeconds` is YARP's activity timeout, not an overall deadline. Additional startup settings are `MaxConcurrentRequests` (64), `AuthorizationPolicy` (optional existing host policy), `FixtureRoot` (trusted directory), `AllowedDestinationAuthorities`, `AllowedDestinationAddresses`, `CredentialHeaderNames` and `AllowLoopbackForTests` (false). Authority and IP lists are empty by default. A proxy destination must be explicitly approved; the sample `.test` domains cannot be forwarded without operator configuration.
+These are illustrative operational settings, not measured performance recommendations. `ProxyTimeoutSeconds` is YARP's activity timeout, not an overall deadline. Additional startup settings are `MaxConcurrentRequests` (64), `AuthorizationPolicy` (optional existing host policy), `FixtureRoot` (trusted directory), `AllowedDestinationAuthorities`, `AllowedDestinationAddresses` and `AllowLoopbackForTests` (false). Authority and IP lists are empty by default. A proxy destination must be explicitly approved; the sample `.test` domains cannot be forwarded without operator configuration.
 
 ### Rules: mock-proxy-gateway.json
 
@@ -295,7 +295,7 @@ In Kubernetes, the dedicated file can be mounted independently through a ConfigM
 
 MockProxyGateway is **authentication- and authorization-agnostic by design**. No JWT, OAuth, OpenID Connect, Identity, API key, authenticated principal, or named authorization policy is required by the library.
 
-Existing hosts can optionally integrate their own authorization policies. The gateway must not change the host's identity configuration or bypass protections that apply to its branch. Upstream credential forwarding is independently controlled per destination.
+Existing hosts can optionally integrate their own authorization policies. The gateway must not change the host's identity configuration or bypass protections that apply to its branch. All valid end-to-end request headers (including Authorization, Cookie, API keys and custom headers) are forwarded to the selected registered destination without header policy configuration.
 
 The absence of mandatory authentication is not permission to expose an unrestricted public proxy. Use an approved non-production environment and appropriate host or infrastructure access controls.
 
@@ -305,7 +305,7 @@ The safety contract includes:
 - Registered, allowlisted destinations; no arbitrary target URLs supplied by clients.
 - SSRF protection, bounded request inspection, regex/evaluation limits, and cancellation support.
 - No automatic forwarding after a mock or evaluation failure.
-- Per-destination credential controls and redacted diagnostics.
+- Transparent end-to-end header forwarding and redacted diagnostics.
 - Synthetic test data only.
 
 ## Local development and verification
@@ -330,7 +330,7 @@ A mock action accepts a status code (200–599), safe response headers, and an o
 
 ### Destination approval and optional authorization
 
-Production activation is always rejected. In Development or Testing only, the operator may explicitly allow literal loopback HTTP upstreams for tests. Otherwise use HTTPS, explicitly approve every authority (host and non-default port) and the resolved IPs, and restrict network egress independently. Credentials are stripped by default for known credential headers and any additional names in `CredentialHeaderNames`; allow only necessary ones per destination via `forwardCredentials`. Use `removeHeaders` and `removeQuery` to remove simulation metadata. The gateway isolates its YARP forwarder's internal logger because the pinned forwarder logs full target URLs. Gateway completion/failure diagnostics emit only structured rule, service, action, status, version, duration, correlation and category fields. Existing host YARP services and logging configuration are unchanged. Configure host HTTP/transport tracing and any other instrumentation to avoid exposing sensitive URLs or request data. Set `AuthorizationPolicy` only if an existing host policy should protect the gateway; absent or denied policies fail closed. No authentication registration is required for policy-free local use.
+Production activation is always rejected. In Development or Testing only, the operator may explicitly allow literal loopback HTTP upstreams for tests. Otherwise use HTTPS, explicitly approve every authority (host and non-default port) and the resolved IPs, and restrict network egress independently. All valid end-to-end request headers are forwarded, including credentials, scenario headers, `Forwarded` and `X-Forwarded-*`. The gateway does not filter or synthesize application headers; YARP handles protocol-specific headers and the outbound `Host` uses the registered destination authority. Only register destinations trusted to receive the full header set; upstreams must not trust client-supplied forwarded metadata as authenticated identity. Use `removeQuery` for explicit removal of simulation query controls. The former `forwardCredentials`, `CredentialHeaderNames` and `removeHeaders` settings are removed; remove them from existing development configuration. The gateway isolates its YARP forwarder's internal logger because the pinned forwarder logs full target URLs. Gateway completion/failure diagnostics emit only structured rule, service, action, status, version, duration, correlation and category fields. Existing host YARP services and logging configuration are unchanged. Configure host HTTP/transport tracing and any other instrumentation to avoid exposing sensitive URLs or request data. Set `AuthorizationPolicy` only if an existing host policy should protect the gateway; absent or denied policies fail closed. No authentication registration is required for policy-free local use.
 
 ### Verification commands
 

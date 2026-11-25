@@ -45,18 +45,6 @@
           "type": "string",
           "format": "uri"
         },
-        "forwardCredentials": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "removeHeaders": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
         "removeQuery": {
           "type": "array",
           "items": {

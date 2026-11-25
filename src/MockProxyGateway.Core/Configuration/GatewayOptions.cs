@@ -43,8 +43,6 @@ public sealed class GatewayOptions
     public string? AuthorizationPolicy { get; set; }
     /// <summary>Trusted fixture directory; relative to the host content root unless absolute.</summary>
     public string? FixtureRoot { get; set; }
-    /// <summary>Additional credential header names to strip unless explicitly permitted per destination.</summary>
-    public string[] CredentialHeaderNames { get; set; } = [];
     /// <summary>Approved upstream URI authorities (including non-default ports).</summary>
     public string[] AllowedDestinationAuthorities { get; set; } = [];
     /// <summary>Explicit approved upstream IP addresses, checked at connection time.</summary>

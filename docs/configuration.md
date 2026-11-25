@@ -25,7 +25,6 @@ loopback upstreams. No deployment or public package publication is required.
 | AllowedDestinationAuthorities | [] | Explicit canonical hosts/ports approved by operator. |
 | AllowedDestinationAddresses | [] | Explicit resolved IPs; each DNS result must be approved. |
 | AllowLoopbackForTests | false | Only Development/Testing, literal loopback HTTP(S) destination with approved authority. |
-| CredentialHeaderNames | [] | Additional host-specific sensitive header names to filter independently for each destination. |
 
 Precedence: explicit middleware prefix > explicit C# option > host configuration
 (including normal appsettings/environment-provider precedence) > library default.
@@ -70,7 +69,7 @@ identifiers, resource limits, destination permissions, and fixture paths.
 | Object | Fields |
 | --- | --- |
 | Root | schemaVersion (1), destinations, services |
-| Destination | baseUrl, forwardCredentials, removeHeaders, removeQuery |
+| Destination | baseUrl, removeQuery |
 | Service | enabled (true), default, rules, endpoints |
 | Endpoint | method (case-insensitive HTTP token or *), path (exact, {id}, terminal {**rest}), default, rules |
 | Rule | id (unique within service), priority (integer), enabled (true), expiresAt (optional UTC), conditions, action |
@@ -150,11 +149,17 @@ tests. Every new socket uses the checked address, not a second DNS lookup.
 Redirect responses are returned to the consumer without automatic following.
 The gateway does not implement retries or mock-to-proxy fallback. A request may
 already have affected an upstream before an error; a 502/504 is not evidence that
-a business mutation did not occur. Client cancellation propagates. The default
-forwarder strips Host (uses destination authority), Forwarded and X-Forwarded-*
-headers, and common credential headers unless independently allowed for that
-destination. Configure all additional sensitive names via CredentialHeaderNames.
-Only explicitly configured test metadata is removed from query and business headers.
+a business mutation did not occur. Client cancellation propagates. All valid
+end-to-end request headers, including Authorization, Cookie, API keys, arbitrary
+custom headers, scenario headers, Forwarded and X-Forwarded-* pass through without
+gateway-level filtering or identity synthesis. No configuration is required.
+YARP handles HTTP protocol-specific headers, and the outbound Host uses the
+registered destination authority. Each registered destination must be trusted
+with the complete end-to-end header set. Upstreams must not treat untrusted
+forwarded metadata as authenticated identity. Explicit removeQuery can still
+remove configured query controls. The former forwardCredentials, removeHeaders,
+and CredentialHeaderNames settings are removed; delete them from existing
+configuration before using this development version.
 The YARP logger used by this gateway is isolated; structured gateway diagnostics
 report service, rule, action, status, version, duration, correlation and failure
 category without payloads. Host HTTP logging, .NET tracing and other observability

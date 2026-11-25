@@ -54,7 +54,7 @@ internal sealed class ProxyTransport : IDisposable
         var target = BuildTarget(context, destination, path);
         var configuration = new ForwarderRequestConfig { ActivityTimeout = TimeSpan.FromSeconds(_options.ProxyTimeoutSeconds) };
         var error = await _forwarder.SendAsync(context, destination.BaseUri.AbsoluteUri, _client, configuration,
-            new GatewayTransformer(destination, target, _options.CredentialHeaderNames)).ConfigureAwait(false);
+            new GatewayTransformer(target)).ConfigureAwait(false);
         // YARP handles transport failures. Never resolve or execute another action.
         return error == ForwarderError.None;
     }
@@ -108,35 +108,15 @@ internal sealed class ProxyTransport : IDisposable
             new UriCreationOptions { DangerousDisablePathAndQueryCanonicalization = true });
     }
 
-    private sealed class GatewayTransformer(Destination destination, Uri target, string[] credentialHeaderNames) : HttpTransformer
+    private sealed class GatewayTransformer(Uri target) : HttpTransformer
     {
-        private static readonly string[] CredentialHeaders = ["Authorization", "Cookie", "Proxy-Authorization", "X-Api-Key", "Api-Key", "X-Auth-Token"];
-
         public override async ValueTask TransformRequestAsync(HttpContext httpContext, HttpRequestMessage proxyRequest,
             string destinationPrefix, CancellationToken cancellationToken)
         {
+            // Preserve every end-to-end header using YARP's native protocol handling.
             await base.TransformRequestAsync(httpContext, proxyRequest, destinationPrefix, cancellationToken).ConfigureAwait(false);
+            // The outbound Host and URI must refer to the registered destination.
             proxyRequest.Headers.Host = null;
-            foreach (var name in proxyRequest.Headers.Select(x => x.Key).ToArray())
-            {
-                if (name.StartsWith("X-Forwarded-", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(name, "Forwarded", StringComparison.OrdinalIgnoreCase) ||
-                    ((CredentialHeaders.Contains(name, StringComparer.OrdinalIgnoreCase) || credentialHeaderNames.Contains(name, StringComparer.OrdinalIgnoreCase)) &&
-                        !destination.ForwardCredentials.Contains(name, StringComparer.OrdinalIgnoreCase)) ||
-                    destination.RemoveHeaders.Contains(name, StringComparer.OrdinalIgnoreCase))
-                    proxyRequest.Headers.Remove(name);
-            }
-            if (proxyRequest.Content is { } content)
-            {
-                foreach (var name in content.Headers.Select(x => x.Key).ToArray())
-                {
-                    if (((CredentialHeaders.Contains(name, StringComparer.OrdinalIgnoreCase) ||
-                        credentialHeaderNames.Contains(name, StringComparer.OrdinalIgnoreCase)) &&
-                        !destination.ForwardCredentials.Contains(name, StringComparer.OrdinalIgnoreCase)) ||
-                        destination.RemoveHeaders.Contains(name, StringComparer.OrdinalIgnoreCase))
-                        content.Headers.Remove(name);
-                }
-            }
             proxyRequest.RequestUri = target;
         }
     }

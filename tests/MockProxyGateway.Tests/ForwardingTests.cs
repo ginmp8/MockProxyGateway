@@ -22,6 +22,7 @@ namespace MockProxyGateway.Tests;
 public sealed class ForwardingTests
 {
     private const string Body = """{"customer":{"riskScore":10,"document":"TEST-OTHER","type":"Individual"}}""";
+    private static readonly string[] MultipleHeaderValues = ["first", "second"];
 
     [Fact]
     public async Task PinnedExampleSelectsMockOrRealActionWithCorrectOutboundCount()
@@ -150,7 +151,7 @@ public sealed class ForwardingTests
         };
         foreach (var header in expected)
             Assert.True(request.Headers.TryAddWithoutValidation(header.Key, header.Value));
-        Assert.True(request.Headers.TryAddWithoutValidation("X-Multiple", new[] { "first", "second" }));
+        Assert.True(request.Headers.TryAddWithoutValidation("X-Multiple", MultipleHeaderValues));
         Assert.True(request.Headers.TryAddWithoutValidation("Connection", "keep-alive"));
         Assert.True(request.Headers.TryAddWithoutValidation("Proxy-Authorization", "Basic c3ludGhldGlj"));
         request.Headers.Host = "untrusted.example.test";
@@ -162,7 +163,7 @@ public sealed class ForwardingTests
         foreach (var header in expected)
             Assert.Equal(header.Value, actual.Headers[header.Key]);
         Assert.Equal(scenario, actual.Scenario);
-        Assert.Equal(new[] { "first", "second" }, actual.MultipleValues);
+        Assert.Equal(MultipleHeaderValues, actual.MultipleValues);
         Assert.False(actual.Headers.ContainsKey("Proxy-Authorization"));
         Assert.False(actual.Headers.ContainsKey("Connection"));
         Assert.Equal(new Uri(upstream.BaseUrl).Authority, actual.Host);

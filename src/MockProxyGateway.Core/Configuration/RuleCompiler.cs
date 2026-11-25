@@ -31,16 +31,11 @@ internal sealed partial class RuleCompiler(GatewayOptions options, string conten
         foreach (var entry in root.GetProperty("destinations").EnumerateObject())
         {
             Id(entry.Name);
-            Only(entry.Value, "baseUrl", "forwardCredentials", "removeHeaders", "removeQuery");
+            Only(entry.Value, "baseUrl", "removeQuery");
             if (!Uri.TryCreate(Text(entry.Value, "baseUrl"), UriKind.Absolute, out var uri) ||
                 !ProxyDestinationPolicy.IsValid(uri, options))
                 throw Invalid("Invalid or unapproved destination.");
-            var credentials = Strings(entry.Value, "forwardCredentials");
-            var removeHeaders = Strings(entry.Value, "removeHeaders");
-            if (credentials.Concat(removeHeaders).Any(x => !GatewayPaths.HttpToken().IsMatch(x)) ||
-                credentials.Contains("Proxy-Authorization", StringComparer.OrdinalIgnoreCase))
-                throw Invalid("Invalid destination header configuration.");
-            destinations.Add(entry.Name, new Destination(uri, credentials, removeHeaders, Strings(entry.Value, "removeQuery")));
+            destinations.Add(entry.Name, new Destination(uri, Strings(entry.Value, "removeQuery")));
         }
         var services = new Dictionary<string, ServiceRules>(StringComparer.Ordinal);
         foreach (var entry in root.GetProperty("services").EnumerateObject())
