@@ -479,6 +479,12 @@
           "Yarp.ReverseProxy": "[2.3.0, )"
         }
       },
+      "mockproxygateway.host": {
+        "type": "Project",
+        "dependencies": {
+          "MockProxyGateway": "[0.1.0-preview.1, )"
+        }
+      },
       "JsonPath.Net": {
         "type": "CentralTransitive",
         "requested": "[2.2.0, )",

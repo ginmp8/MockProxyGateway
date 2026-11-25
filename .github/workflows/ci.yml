@@ -20,18 +20,7 @@ jobs:
       - name: SDK information
         run: dotnet --info
       - name: Restore locked dependencies
-        run: |
-          if ! dotnet restore MockProxyGateway.sln --locked-mode; then
-            # Read-only diagnostic: obtain real regenerated locks for an intentional
-            # dependency-graph change. This run still fails its locked-restore gate.
-            dotnet restore MockProxyGateway.sln --use-lock-file --force-evaluate
-            for f in $(find src tests -name packages.lock.json | sort); do
-              echo "::group::$f"
-              cat "$f"
-              printf '\n::endgroup::\n'
-            done
-            exit 1
-          fi
+        run: dotnet restore MockProxyGateway.sln --locked-mode
       - name: Release build
         run: dotnet build MockProxyGateway.sln -c Release --no-restore
       - name: Test
