@@ -181,6 +181,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
         var hasFilter = false;
         var hasRepeatedTraversal = false;
         var hasCubicTraversal = false;
+        var regexCandidateMultiplier = 0;
         if (source == "body")
         {
             // Parse RFC 9535 syntax with the pinned library, not a second approximate grammar.
@@ -240,6 +241,14 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 if (predicateUnionProduct > 4 / pathMultiplier)
                     throw Invalid("JSONPath predicate union complexity limit exceeded.");
                 pathMultiplier *= predicateUnionProduct;
+                var regexFilters = localFilters.Values.Count(x => x is BoundedRegexFilterSelector);
+                if (regexFilters != 0)
+                {
+                    if (recursive)
+                        throw Invalid("JSONPath regex filters cannot be combined with outer descent.");
+                    // Reserve candidate visits before invoking any regex.
+                    regexCandidateMultiplier = regexFilters * pathMultiplier;
+                }
                 if (!JsonPath.TryParse(normalized, out jsonPath))
                     throw Invalid("Invalid bounded JSONPath filter.");
                 // Replace only selectors on this newly compiled path. The
@@ -267,7 +276,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 pathMultiplier *= 2 + recursiveSuffix;
         }
         return new Condition("leaf", [], source, key, op, hasValue ? operand.Clone() : default,
-            quantifier, ignoreCase, regex, jsonPath, hasValue ? 1 + operand.GetRawText().Length / 64 : 0, pathMultiplier, hasFilter, hasRepeatedTraversal, hasCubicTraversal);
+            quantifier, ignoreCase, regex, jsonPath, hasValue ? 1 + operand.GetRawText().Length / 64 : 0, pathMultiplier, hasFilter, hasRepeatedTraversal, hasCubicTraversal, regexCandidateMultiplier);
     }
 
     internal static decimal Number(JsonElement value)

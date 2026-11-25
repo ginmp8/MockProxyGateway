@@ -147,6 +147,10 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                         _filterNumbersValidated = true;
                     }
                 }
+                var regexCandidates = _bodyNodes * condition.JsonPathRegexCandidateMultiplier;
+                if (regexCandidates > _regexRemaining)
+                    throw new RequestFailure(400, "regex-budget");
+                _regexRemaining -= regexCandidates;
                 var matches = condition.JsonPath!.Evaluate(_body).Matches;
                 var results = new List<JsonElement>();
                 foreach (var match in matches)

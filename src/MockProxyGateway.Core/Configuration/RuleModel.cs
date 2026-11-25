@@ -14,5 +14,5 @@ internal sealed record MockResponse(int StatusCode, IReadOnlyDictionary<string, 
 internal sealed record Condition(string Kind, Condition[] Children, string? Source = null, string? Key = null, string? Operator = null,
     JsonElement Value = default, string Quantifier = "any", bool IgnoreCase = false, Regex? Regex = null, JsonPath? JsonPath = null,
     int OperandCost = 0, int JsonPathWorkMultiplier = 1, bool HasJsonPathFilter = false, bool HasJsonPathRepeatedTraversal = false,
-    bool HasJsonPathCubicTraversal = false);
+    bool HasJsonPathCubicTraversal = false, int JsonPathRegexCandidateMultiplier = 0);
 internal sealed record Selection(RuleAction? Action, string RuleId);

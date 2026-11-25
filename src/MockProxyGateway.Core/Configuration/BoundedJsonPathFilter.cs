@@ -38,7 +38,8 @@ internal static class BoundedJsonPathFilter
             {
                 if (Take(path, ref index, "?"))
                 {
-                    if (TryReadLengthFilter(path, ref index, out var local, ref usesRepeatedTraversal))
+                    if (TryReadLengthFilter(path, ref index, out var local, ref usesRepeatedTraversal) ||
+                        TryReadRegexFilter(path, ref index, out local, ref usesRepeatedTraversal))
                         localFilters.Add(filterIndex, local!);
                     else
                         ReadExpression(path, ref index, 0, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, ref hasRepeatedPredicateDescent, filterDepth);
@@ -111,6 +112,50 @@ internal static class BoundedJsonPathFilter
         using var number = JsonDocument.Parse(path[start..cursor]);
         selector = new BoundedLengthFilterSelector(argument, RuleCompiler.Number(number.RootElement), comparison,
             path[expressionStart..cursor]);
+        index = cursor;
+        return true;
+    }
+
+    private static bool TryReadRegexFilter(string path, ref int index, out ISelector? selector, ref bool usesRepeatedTraversal)
+    {
+        selector = null;
+        var cursor = index;
+        SkipWhitespace(path, ref cursor);
+        var expressionStart = cursor;
+        var fullMatch = Take(path, ref cursor, "match");
+        if (!fullMatch && !Take(path, ref cursor, "search"))
+            return false;
+        Require(path, ref cursor, "(");
+        SkipWhitespace(path, ref cursor);
+        var start = cursor;
+        if (cursor >= path.Length || path[cursor] is not ('@' or '$'))
+            throw Invalid();
+        usesRepeatedTraversal |= path[cursor] == '$';
+        while (cursor < path.Length && path[cursor] != ',')
+        {
+            if (path[cursor] is '\'' or '"')
+                ReadQuoted(path, ref cursor);
+            else
+                cursor++;
+        }
+        if (cursor == path.Length ||
+            !JsonPath.TryParse(path[start..cursor].Trim(), out var argument,
+                new PathParsingOptions { AllowRelativePathStart = true }) ||
+            !argument.IsSingular || argument.Segments.Length > 16)
+            throw Invalid();
+        Require(path, ref cursor, ",");
+        SkipWhitespace(path, ref cursor);
+        start = cursor;
+        if (cursor >= path.Length || path[cursor] is not ('\'' or '"'))
+            throw Invalid();
+        ReadQuoted(path, ref cursor);
+        // Reuse the pinned string-literal decoder through a name selector.
+        if (!JsonPath.TryParse("$[" + path[start..cursor] + "]", out var literal) ||
+            literal.Segments[0].Selectors[0] is not NameSelector name)
+            throw Invalid();
+        Require(path, ref cursor, ")");
+        selector = new BoundedRegexFilterSelector(argument,
+            BoundedRegexFilterSelector.Compile(name.Name, fullMatch), path[expressionStart..cursor]);
         index = cursor;
         return true;
     }

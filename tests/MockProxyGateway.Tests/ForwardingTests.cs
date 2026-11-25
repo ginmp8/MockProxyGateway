@@ -679,6 +679,41 @@ public sealed class ForwardingTests
         Assert.Same(originalFunction, currentFunction);
     }
 
+    [Theory]
+    [InlineData("$.items[?match(@.name, '..')]", false, 202, 0)]
+    [InlineData("$.items[?search(@.name, 'z')]", false, 201, 1)]
+    [InlineData("$.items[?match(@.name, '..')]", true, 400, 0)]
+    [InlineData("$.items[?match($.label, '..')]", false, 202, 0)]
+    public async Task RegexFilterIsScalarCorrectAndBudgetedWithoutGlobalRegistration(string selector, bool large, int status, int calls)
+    {
+        Assert.True(Json.Path.FunctionRepository.TryGet("match", out var originalFunction));
+        Assert.True(Json.Path.FunctionRepository.TryGet("search", out var originalSearch));
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"match","priority":1,"conditions":{"source":"body","key":"$.items","operator":"exists"},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        rules["services"]!["a"]!["rules"]![0]!["conditions"]!["key"] = selector;
+        await using var gateway = await StartGatewayAsync(rules, upstream);
+        using var client = gateway.GetTestClient();
+        var payload = "{\"label\":\"e\\u0301\",\"items\":[" +
+            string.Join(',', Enumerable.Repeat("{\"name\":\"e\\u0301\"}", large ? 80 : 1)) + "]}";
+        using var body = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync("/mock-proxy/a/check", body, TestContext.Current.CancellationToken);
+        Assert.Equal((HttpStatusCode)status, response.StatusCode);
+        Assert.Equal(calls, upstream.Requests.Count);
+        if (calls == 1)
+            Assert.Equal(payload, Assert.Single(upstream.Requests).Body);
+        Assert.True(Json.Path.FunctionRepository.TryGet("match", out var currentFunction));
+        Assert.Same(originalFunction, currentFunction);
+        Assert.True(Json.Path.FunctionRepository.TryGet("search", out var currentSearch));
+        Assert.Same(originalSearch, currentSearch);
+    }
+
     [Fact]
     public async Task NestedRelativeFilterSelectsMockOrRealWithoutExtraOutboundCalls()
     {

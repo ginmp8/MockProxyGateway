@@ -149,8 +149,17 @@ counts members, and unsupported or missing values produce Nothing. The
 [pinned upstream length implementation](https://github.com/json-everything/json-everything/blob/f53d4d27eeed6a73d377bf4188175f0b8a46f856/src/JsonPath/LengthFunction.cs)
 counts graphemes, so the gateway does not evaluate that function or modify
 the process-global registry. The same traversal/byte budgets apply. Compound
-or nested length expressions, other length argument forms, `match()` and
-`search()` remain rejected.
+or nested length expressions and other length argument forms remain rejected.
+Standalone `match(@.name, 'test-.*')` and `search(@.name, '[A-Z]+')` use private
+selectors with constant I-Regexp patterns and singular relative/root queries.
+Supported patterns: Unicode literals (including literal ^ and $), scalar dot
+(excluding CR/LF), escaped literals, positive ASCII alphanumeric classes/ranges,
+and simple *, + and ? quantifiers. Grouping, alternation, range quantifiers,
+negated classes and Unicode property classes remain rejected. Match consumes
+the entire string; search looks for a substring. Missing and non-string values
+do not match. The nonbacktracking engine has a 25 ms timeout and candidate
+visits are reserved from the shared 64-evaluation budget before evaluation.
+Outer descent and compound/nested regex predicates remain unsupported.
 The request budget is charged before evaluation for body nodes multiplied by
 the union product; when descent is present, the charge also accounts for
 descendant traversal and every subsequent segment. Filters conservatively
