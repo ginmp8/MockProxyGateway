@@ -335,6 +335,83 @@ public sealed class ForwardingTests
         }
     }
 
+    [Theory]
+    [InlineData("abort", 502)]
+    [InlineData("timeout", 504)]
+    public async Task FailedMutationIsNotRetriedOrReplacedWithMock(string failure, int status)
+    {
+        var calls = 0;
+        await using var upstream = await Upstream.StartAsync(async context =>
+        {
+            await context.Request.Body.CopyToAsync(Stream.Null, context.RequestAborted);
+            Interlocked.Increment(ref calls);
+            if (failure == "abort")
+                context.Abort();
+            else
+                await Task.Delay(TimeSpan.FromSeconds(10), context.RequestAborted);
+        });
+        var json = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"mock","response":{"statusCode":200}},"endpoints":[
+              {"method":"POST","path":"/mutate","default":{"mode":"proxy","destination":"real"}}
+             ]}}}
+            """)!;
+        json["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        await using var gateway = await StartGatewayAsync(json, upstream, configure: o => o.ProxyTimeoutSeconds = 1);
+        using var client = gateway.GetTestClient();
+        using var request = CreateRequest("POST", "/mock-proxy/a/mutate", Body);
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal((HttpStatusCode)status, response.StatusCode);
+        Assert.Equal(1, Volatile.Read(ref calls));
+    }
+
+    [Fact]
+    public async Task HostnameResolvingToLoopbackIsDeniedBeforeConnection()
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var uri = new Uri(upstream.BaseUrl);
+        var target = $"https://localhost:{uri.Port}/";
+        var json = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"https://localhost/"}},
+            "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
+            """)!;
+        json["destinations"]!["real"]!["baseUrl"] = target;
+        await using var gateway = await StartGatewayAsync(json, upstream,
+            configure: o => o.AllowedDestinationAuthorities = [new Uri(target).Authority]);
+        using var client = gateway.GetTestClient();
+        using var response = await client.GetAsync("/mock-proxy/a/check", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        Assert.Empty(upstream.Requests);
+    }
+
+    [Theory]
+    [InlineData("https://169.254.169.254/")]
+    [InlineData("https://100.100.100.200/")]
+    [InlineData("https://[fd00:ec2::254]/")]
+    [InlineData("http://192.0.2.1/")]
+    [InlineData("https://user:password@127.0.0.1/")]
+    [InlineData("https://127.0.0.1/a/../b")]
+    [InlineData("https://127.0.0.1/a/%2e%2e/b")]
+    public async Task UnsafeDestinationRejectedEvenWithExplicitAuthority(string target)
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var json = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"https://localhost/"}},
+            "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
+            """)!;
+        json["destinations"]!["real"]!["baseUrl"] = target;
+        var uri = new Uri(target);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await using var gateway = await StartGatewayAsync(json, upstream, configure: o =>
+            {
+                o.AllowedDestinationAuthorities = [uri.Authority];
+                o.AllowedDestinationAddresses = [uri.Host.Trim('[', ']')];
+            });
+        });
+        Assert.Empty(upstream.Requests);
+    }
+
     private static HttpRequestMessage CreateRequest(string method, string url, string? body, string? scenario = null)
     {
         var request = new HttpRequestMessage(new HttpMethod(method), url);
@@ -346,7 +423,7 @@ public sealed class ForwardingTests
     }
 
     private static async Task<WebApplication> StartGatewayAsync(JsonNode json, Upstream upstream, bool realServer = false,
-        Func<System.Text.Json.JsonElement>? provider = null, ILoggerProvider? capture = null)
+        Func<System.Text.Json.JsonElement>? provider = null, ILoggerProvider? capture = null, Action<GatewayOptions>? configure = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
         if (capture is not null)
@@ -364,6 +441,7 @@ public sealed class ForwardingTests
             options.ReloadOnChange = provider is not null;
             options.AllowLoopbackForTests = true;
             options.AllowedDestinationAuthorities = [new Uri(upstream.BaseUrl).Authority];
+            configure?.Invoke(options);
         });
         var app = builder.Build();
         try

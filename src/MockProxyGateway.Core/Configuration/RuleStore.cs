@@ -59,7 +59,7 @@ internal sealed partial class RuleStore : IAsyncDisposable
             bytes = ReadInline();
         else if (string.Equals(_options.RuleSource, "Configuration", StringComparison.OrdinalIgnoreCase))
         {
-            if (_configuration.GetSection("MockProxyGateway:Rules").GetChildren().Any())
+            if (_configuration.GetSection("MockProxyGateway:Rules").Exists())
                 throw new InvalidOperationException("Conflicting inline and serialized rule sources.");
             var json = _explicitSerialized ?? _configuration["MockProxyGateway:RulesJson"] ??
                 throw new InvalidOperationException("Complete serialized rule document required.");
@@ -67,8 +67,8 @@ internal sealed partial class RuleStore : IAsyncDisposable
         }
         else if (string.Equals(_options.RuleSource, "File", StringComparison.OrdinalIgnoreCase))
         {
-            if (_configuration.GetSection("MockProxyGateway:Rules").GetChildren().Any() ||
-                _configuration["MockProxyGateway:RulesJson"] is not null)
+            if (_configuration.GetSection("MockProxyGateway:Rules").Exists() ||
+                _configuration["MockProxyGateway:RulesJson"] is not null || _explicitSerialized is not null)
                 throw new InvalidOperationException("Conflicting file and inline/serialized rule sources.");
             var path = Path.GetFullPath(_options.ConfigurationFile, _environment.ContentRootPath);
             using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
@@ -140,10 +140,17 @@ internal sealed partial class RuleStore : IAsyncDisposable
                 {
                     var bytes = ReadDocument();
                     var hash = Convert.ToHexString(SHA256.HashData(bytes));
-                    if (hash == _attemptedHash && !_lastFailed)
+                    if (hash == _attemptedHash)
+                    {
+                        if (_lastFailed)
+                        {
+                            _lastFailed = false;
+                            Loaded(_logger, Current.Version);
+                        }
                         continue;
-                    _attemptedHash = hash;
+                    }
                     var next = new RuleCompiler(_options, _environment.ContentRootPath).Compile(bytes, Current.Version + 1);
+                    _attemptedHash = hash;
                     Volatile.Write(ref _snapshot, next);
                     _lastFailed = false;
                     Loaded(_logger, next.Version);

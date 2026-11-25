@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -21,6 +22,7 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
     private bool _bodyLoaded;
     private int _budget = 65536;
     private int _bodyNodes;
+    private long _selectionBytes;
     private readonly Dictionary<string, JsonElement[]> _bodySelections = new(StringComparer.Ordinal);
 
     internal async ValueTask<Selection> ResolveAsync(ServiceRules service, string path)
@@ -124,7 +126,17 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                     return cached;
                 Charge(_bodyNodes);
                 var matches = condition.JsonPath!.Evaluate(_body).Matches;
-                var selected = matches.Select(x => JsonSerializer.SerializeToElement(x.Value)).ToArray();
+                var results = new List<JsonElement>();
+                foreach (var match in matches)
+                {
+                    Charge(1);
+                    var element = JsonSerializer.SerializeToElement(match.Value);
+                    _selectionBytes += Encoding.UTF8.GetByteCount(element.GetRawText());
+                    if (_selectionBytes > 2L * options.MaxBodySizeBytes)
+                        throw new RequestFailure(400, "selection-budget");
+                    results.Add(element);
+                }
+                var selected = results.ToArray();
                 _bodySelections.Add(condition.Key!, selected);
                 return selected;
             case "header":
@@ -223,9 +235,18 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
             throw new RequestFailure(400, "evaluation-budget");
     }
 
-    private static bool Compare(Condition condition, JsonElement actual)
+    private bool Compare(Condition condition, JsonElement actual)
     {
         var operand = condition.Value;
+        // Bound membership fan-out and text/structural comparison work, not only leaf count.
+        var length = actual.ValueKind == JsonValueKind.String ? actual.GetString()!.Length :
+            actual.ValueKind is JsonValueKind.Array or JsonValueKind.Object ? actual.GetRawText().Length : 1;
+        var cost = 1L + (length / 64L);
+        if (condition.Operator is "in" or "notIn")
+            cost *= operand.GetArrayLength();
+        if (cost > int.MaxValue)
+            throw new RequestFailure(400, "evaluation-budget");
+        Charge((int)cost);
         var comparison = condition.IgnoreCase || condition.Source is "method" or "contentType"
             ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         bool Equal(JsonElement value) => actual.ValueKind == value.ValueKind &&

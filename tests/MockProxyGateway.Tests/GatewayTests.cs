@@ -230,6 +230,104 @@ public sealed class GatewayTests
         Assert.Equal(HttpStatusCode.Accepted, wildcardMethod.StatusCode);
     }
 
+    [Theory]
+    [InlineData("$['with.dot']", "{\"with.dot\":42}")]
+    [InlineData("$.items[-1]", "{\"items\":[0,42]}")]
+    [InlineData("$.items.*", "{\"items\":{\"one\":42}}")]
+    public async Task RfcChildSelectorsSupportQuotedNamesNegativeIndexAndObjectWildcard(string selector, string payload)
+    {
+        var rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
+              {"id":"selector","priority":1,"conditions":{"source":"body","key":SELECTOR,"operator":"equals","value":42},
+               "action":{"mode":"mock","response":{"statusCode":201}}}
+            ],"default":{"mode":"mock","response":{"statusCode":404}}}}}
+            """.Replace("SELECTOR", System.Text.Json.JsonSerializer.Serialize(selector), StringComparison.Ordinal);
+        await using var fixture = await Fixture.StartAsync(rules);
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var response = await fixture.Client.PostAsync("/mock-proxy/test/check", content, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("POST", "/check", "application/problem+json", 201)]
+    [InlineData("post", "/check", "application/json", 201)]
+    [InlineData("GET", "/check", "application/json", 404)]
+    [InlineData("POST", "/Check", "application/json", 404)]
+    [InlineData("POST", "/check", "text/plain", 404)]
+    public async Task MethodPathAndContentTypeConditionsRespectCaseAndShortCircuit(string method, string path, string type, int expected)
+    {
+        const string rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
+              {"id":"match","priority":1,"conditions":{"all":[
+                 {"source":"method","operator":"equals","value":"POST"},
+                 {"source":"path","operator":"equals","value":"/check"},
+                 {"any":[{"source":"contentType","operator":"equals","value":"application/json"},
+                         {"source":"contentType","operator":"equals","value":"application/problem+json"}]},
+                 {"not":{"source":"header","key":"X-Disabled","operator":"exists"}}]},
+               "action":{"mode":"mock","response":{"statusCode":201}}}
+            ],"default":{"mode":"mock","response":{"statusCode":404}}}}}
+            """;
+        await using var fixture = await Fixture.StartAsync(rules);
+        using var request = new HttpRequestMessage(new HttpMethod(method), "/mock-proxy/test" + path)
+        {
+            Content = new StringContent("not inspected", Encoding.UTF8, type)
+        };
+        using var response = await fixture.Client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal((HttpStatusCode)expected, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("Content-Length", "5")]
+    [InlineData("Connection", "close")]
+    [InlineData("X-Synthetic", "value\r\ninjected: yes")]
+    [InlineData("Content-Type", "invalid media type")]
+    public async Task InvalidMockHeadersCannotActivate(string name, string value)
+    {
+        var rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"default":{"mode":"mock",
+             "response":{"statusCode":200,"headers":HEADERS}}}}}
+            """.Replace("HEADERS", System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string> { [name] = value }), StringComparison.Ordinal);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await using var fixture = await Fixture.StartAsync(rules);
+        });
+    }
+
+    [Fact]
+    public async Task HeadAndEmptyStatusesDoNotWriteResponseBodies()
+    {
+        const string rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"endpoints":[
+              {"method":"HEAD","path":"/head","default":{"mode":"mock","response":{"statusCode":200,"text":"synthetic"}}},
+              {"method":"GET","path":"/empty","default":{"mode":"mock","response":{"statusCode":204}}}
+            ]}}}
+            """;
+        await using var fixture = await Fixture.StartAsync(rules);
+        var ct = TestContext.Current.CancellationToken;
+        using var head = new HttpRequestMessage(HttpMethod.Head, "/mock-proxy/test/head");
+        using var response = await fixture.Client.SendAsync(head, ct);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(9, response.Content.Headers.ContentLength);
+        Assert.Empty(await response.Content.ReadAsByteArrayAsync(ct));
+        using var empty = await fixture.Client.GetAsync("/mock-proxy/test/empty", ct);
+        Assert.Equal(HttpStatusCode.NoContent, empty.StatusCode);
+        Assert.Empty(await empty.Content.ReadAsByteArrayAsync(ct));
+    }
+
+    [Fact]
+    public async Task ExcessiveBodyNodesFailClosed()
+    {
+        await using var fixture = await Fixture.StartAsync(Rules);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/mock-proxy/compliance/analysis")
+        {
+            Content = new StringContent("{\"customer\":{\"riskScore\":90},\"array\":[" +
+                string.Join(',', Enumerable.Repeat("0", 16384)) + "]}", Encoding.UTF8, "application/json")
+        };
+        request.Headers.Add("X-Test-Scenario", "success");
+        using var response = await fixture.Client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     private sealed class Fixture(WebApplication app, HttpClient client, string directory) : IAsyncDisposable
     {
         public HttpClient Client { get; } = client;

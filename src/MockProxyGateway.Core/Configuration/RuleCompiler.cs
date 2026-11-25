@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Json.Path;
+using Microsoft.Net.Http.Headers;
 
 namespace MockProxyGateway.Configuration;
 
@@ -10,6 +11,8 @@ internal sealed partial class RuleCompiler(GatewayOptions options, string conten
 {
     private int _nodes;
     private int _rules;
+    private long _mockBytes;
+    private const int MaximumSnapshotBodyBytes = 16_777_216;
     private static readonly HashSet<string> ForbiddenResponseHeaders = new(StringComparer.OrdinalIgnoreCase)
     {
         "Connection", "Transfer-Encoding", "Content-Length", "Keep-Alive", "Upgrade", "Trailer",
@@ -140,7 +143,7 @@ internal sealed partial class RuleCompiler(GatewayOptions options, string conten
         }
         if (op is "in" or "notIn")
         {
-            if (operand.ValueKind != JsonValueKind.Array || operand.GetArrayLength() == 0 ||
+            if (operand.ValueKind != JsonValueKind.Array || operand.GetArrayLength() is < 1 or > 128 ||
                 operand.EnumerateArray().Any(x => x.ValueKind is JsonValueKind.Array or JsonValueKind.Object ||
                     (source != "body" && x.ValueKind != JsonValueKind.String)))
                 throw Invalid("Membership requires nonempty scalar array.");
@@ -165,8 +168,10 @@ internal sealed partial class RuleCompiler(GatewayOptions options, string conten
                 (source != "body" && operand.ValueKind != JsonValueKind.String))
                 throw Invalid("Invalid scalar operand.");
         }
-        if (ignoreCase && op is not ("equals" or "notEquals" or "contains" or "startsWith" or "endsWith" or "in" or "notIn" or "regex"))
-            throw Invalid("ignoreCase applies only to text operators.");
+        if (ignoreCase && (op is not ("equals" or "notEquals" or "contains" or "startsWith" or "endsWith" or "in" or "notIn" or "regex") ||
+            (operand.ValueKind != JsonValueKind.String &&
+             !(operand.ValueKind == JsonValueKind.Array && operand.EnumerateArray().All(x => x.ValueKind == JsonValueKind.String)))))
+            throw Invalid("ignoreCase applies only to text operands.");
         Regex? regex = null;
         if (op == "regex")
         {
@@ -179,7 +184,7 @@ internal sealed partial class RuleCompiler(GatewayOptions options, string conten
         JsonPath? jsonPath = null;
         if (source == "body")
         {
-            // Restrict the initial selector subset to bounded property/index/wildcard paths.
+            // Admit RFC 9535 child selectors only. No descendant, filter, union or slice expansion.
             if (key!.Length > 256 || !BoundedJsonPath().IsMatch(key))
                 throw Invalid("Unsupported or overly complex JSONPath.");
             jsonPath = JsonPath.Parse(key);
@@ -188,7 +193,7 @@ internal sealed partial class RuleCompiler(GatewayOptions options, string conten
             quantifier, ignoreCase, regex, jsonPath);
     }
 
-    [GeneratedRegex(@"^\$(?:\.[A-Za-z_][A-Za-z0-9_-]*|\[(?:\*|[0-9]{1,8})\]){0,16}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("""^\$(?:\.[A-Za-z_][A-Za-z0-9_]*|\.\*|\[(?:\*|-?(?:0|[1-9][0-9]{0,7})|'(?:[^'\\\x00-\x1F]|\\(?:['\\/bfnrt]|u[0-9A-Fa-f]{4}))*'|"(?:[^"\\\x00-\x1F]|\\(?:["\\/bfnrt]|u[0-9A-Fa-f]{4}))*")\]){0,16}$""", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)]
     private static partial Regex BoundedJsonPath();
 
     internal static decimal Number(JsonElement value)
@@ -230,8 +235,10 @@ internal sealed partial class RuleCompiler(GatewayOptions options, string conten
             {
                 var value = header.Value.GetString() ?? throw Invalid("Invalid header value.");
                 if (!GatewayPaths.HttpToken().IsMatch(header.Name) || ForbiddenResponseHeaders.Contains(header.Name) ||
-                    value.Any(c => char.IsControl(c) && c != '\t') || value.Length > 8192)
-                    throw Invalid("Unsafe mock response header.");
+                    value.Any(c => c != '\t' && (c < ' ' || c > '~')) || value.Length > 8192 ||
+                    (string.Equals(header.Name, "Content-Type", StringComparison.OrdinalIgnoreCase) &&
+                        !MediaTypeHeaderValue.TryParse(value, out _)))
+                    throw Invalid("Unsafe or invalid mock response header.");
                 headers.Add(header.Name, value);
             }
         }
@@ -244,8 +251,12 @@ internal sealed partial class RuleCompiler(GatewayOptions options, string conten
         var body = hasJson ? Encoding.UTF8.GetBytes(json.GetRawText()) :
             hasText ? Encoding.UTF8.GetBytes(text.GetString() ?? throw Invalid("Invalid text body.")) :
             hasFile ? ReadFixture(file.GetString() ?? throw Invalid("Invalid fixture reference.")) : null;
-        if (body is { Length: > 4_194_304 })
-            throw Invalid("Mock body exceeds its size limit.");
+        if (body is not null)
+        {
+            _mockBytes += body.Length;
+            if (body.Length > 4_194_304 || _mockBytes > MaximumSnapshotBodyBytes)
+                throw Invalid("Mock body exceeds its individual or aggregate size limit.");
+        }
         return new RuleAction(mode, null, null, new MockResponse(status, headers, body,
             hasJson ? "application/json; charset=utf-8" : hasText ? "text/plain; charset=utf-8" :
             hasFile ? "application/octet-stream" : null, delay));
@@ -255,11 +266,12 @@ internal sealed partial class RuleCompiler(GatewayOptions options, string conten
     private byte[] ReadFixture(string relative)
     {
         if (string.IsNullOrWhiteSpace(options.FixtureRoot) || Path.IsPathRooted(relative) ||
-            relative.Contains(':') || relative.Split(['/', '\\']).Any(x => x is "" or "." or ".."))
+            relative.Contains(':') || relative.Split(['/', '\\']).Any(x => x is "" or "." or ".." || x.EndsWith('.') || x.EndsWith(' ')))
             throw Invalid("Invalid fixture location.");
         var root = Path.GetFullPath(options.FixtureRoot, contentRoot);
         var file = new FileInfo(Path.GetFullPath(relative, root));
-        if (!file.Exists || file.Length > 4_194_304 || file.Attributes.HasFlag(FileAttributes.ReparsePoint))
+        if (!file.Exists || file.Length > 4_194_304 || _mockBytes + file.Length > MaximumSnapshotBodyBytes ||
+            file.Attributes.HasFlag(FileAttributes.ReparsePoint))
             throw Invalid("Invalid fixture file.");
         for (var directory = file.Directory; directory is not null; directory = directory.Parent)
         {
@@ -268,7 +280,7 @@ internal sealed partial class RuleCompiler(GatewayOptions options, string conten
         }
         // Only the host/operator may modify this trusted directory. Capture bytes during validation.
         using var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.Read);
-        if (stream.Length > 4_194_304)
+        if (stream.Length > 4_194_304 || _mockBytes + stream.Length > MaximumSnapshotBodyBytes)
             throw Invalid("Fixture exceeds its size limit.");
         var bytes = new byte[checked((int)stream.Length)];
         stream.ReadExactly(bytes);

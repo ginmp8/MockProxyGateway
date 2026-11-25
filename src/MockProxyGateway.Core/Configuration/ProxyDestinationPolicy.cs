@@ -7,9 +7,18 @@ internal static class ProxyDestinationPolicy
 {
     internal static bool IsValid(Uri uri, GatewayOptions options)
     {
-        if (!uri.IsAbsoluteUri || !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) ||
+        if (!uri.IsAbsoluteUri || !uri.IsWellFormedOriginalString() || uri.OriginalString.Contains('\\') ||
+            uri.OriginalString.Any(char.IsControl) || !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) ||
             !string.IsNullOrEmpty(uri.Fragment) || !GatewayPaths.IsSafe(uri.AbsolutePath) ||
             !options.AllowedDestinationAuthorities.Contains(uri.Authority, StringComparer.OrdinalIgnoreCase))
+            return false;
+        // Validate before URI normalization can erase unsafe dot segments.
+        var authorityStart = uri.OriginalString.IndexOf("://", StringComparison.Ordinal);
+        if (authorityStart < 0)
+            return false;
+        var rawPathStart = uri.OriginalString.IndexOf('/', authorityStart + 3);
+        if (rawPathStart >= 0 && (!GatewayPaths.IsSafe(uri.OriginalString[rawPathStart..]) ||
+            !GatewayPaths.IsEscapedTargetPart(uri.OriginalString[rawPathStart..], query: false)))
             return false;
         if (IPAddress.TryParse(uri.Host.Trim('[', ']'), out var literal) && !IsApproved(literal, options))
             return false;

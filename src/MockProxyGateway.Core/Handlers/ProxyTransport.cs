@@ -51,9 +51,10 @@ internal sealed class ProxyTransport : IDisposable
             context.Response.StatusCode = StatusCodes.Status502BadGateway;
             return false;
         }
+        var target = BuildTarget(context, destination, path);
         var configuration = new ForwarderRequestConfig { ActivityTimeout = TimeSpan.FromSeconds(_options.ProxyTimeoutSeconds) };
         var error = await _forwarder.SendAsync(context, destination.BaseUri.AbsoluteUri, _client, configuration,
-            new GatewayTransformer(destination, path, _options.CredentialHeaderNames)).ConfigureAwait(false);
+            new GatewayTransformer(destination, target, _options.CredentialHeaderNames)).ConfigureAwait(false);
         // YARP handles transport failures. Never resolve or execute another action.
         return error == ForwarderError.None;
     }
@@ -86,7 +87,28 @@ internal sealed class ProxyTransport : IDisposable
         _forwarderServices.Dispose();
     }
 
-    private sealed class GatewayTransformer(Destination destination, string path, string[] credentialHeaderNames) : HttpTransformer
+    private static Uri BuildTarget(HttpContext context, Destination destination, string path)
+    {
+        var query = context.Request.QueryString.Value ?? "";
+        if (destination.RemoveQuery.Length > 0 && query.Length > 1)
+        {
+            var fields = query[1..].Split('&');
+            var retained = fields.Where(field => !QueryHelpers.ParseQuery("?" + field).Keys
+                .Any(key => destination.RemoveQuery.Contains(key, StringComparer.OrdinalIgnoreCase)));
+            var filtered = string.Join('&', retained);
+            query = filtered.Length == 0 ? "" : "?" + filtered;
+        }
+        if (!GatewayPaths.IsSafe(path) || !GatewayPaths.IsEscapedTargetPart(path, query: false) ||
+            !GatewayPaths.IsEscapedTargetPart(query, query: true))
+            throw new RequestFailure(400);
+        // The authority and base path are exclusively from the validated destination, never the request.
+        var target = destination.BaseUri.GetLeftPart(UriPartial.Authority) +
+            destination.BaseUri.AbsolutePath.TrimEnd('/') + path + query;
+        return new Uri(target,
+            new UriCreationOptions { DangerousDisablePathAndQueryCanonicalization = true });
+    }
+
+    private sealed class GatewayTransformer(Destination destination, Uri target, string[] credentialHeaderNames) : HttpTransformer
     {
         private static readonly string[] CredentialHeaders = ["Authorization", "Cookie", "Proxy-Authorization", "X-Api-Key", "Api-Key", "X-Auth-Token"];
 
@@ -104,25 +126,18 @@ internal sealed class ProxyTransport : IDisposable
                     destination.RemoveHeaders.Contains(name, StringComparer.OrdinalIgnoreCase))
                     proxyRequest.Headers.Remove(name);
             }
-            foreach (var name in destination.RemoveHeaders)
-                proxyRequest.Content?.Headers.Remove(name);
-            var query = httpContext.Request.QueryString.Value ?? "";
-            if (destination.RemoveQuery.Length > 0 && query.Length > 1)
+            if (proxyRequest.Content is { } content)
             {
-                var fields = query[1..].Split('&');
-                var retained = fields.Where(field => !QueryHelpers.ParseQuery("?" + field).Keys
-                    .Any(key => destination.RemoveQuery.Contains(key, StringComparer.OrdinalIgnoreCase)));
-                var filtered = string.Join('&', retained);
-                query = filtered.Length == 0 ? "" : "?" + filtered;
+                foreach (var name in content.Headers.Select(x => x.Key).ToArray())
+                {
+                    if (((CredentialHeaders.Contains(name, StringComparer.OrdinalIgnoreCase) ||
+                        credentialHeaderNames.Contains(name, StringComparer.OrdinalIgnoreCase)) &&
+                        !destination.ForwardCredentials.Contains(name, StringComparer.OrdinalIgnoreCase)) ||
+                        destination.RemoveHeaders.Contains(name, StringComparer.OrdinalIgnoreCase))
+                        content.Headers.Remove(name);
+                }
             }
-            if (!GatewayPaths.IsSafe(path) || !GatewayPaths.IsEscapedTargetPart(path, query: false) ||
-                !GatewayPaths.IsEscapedTargetPart(query, query: true))
-                throw new RequestFailure(400);
-            // The authority and base path are exclusively from the validated destination, never the request.
-            var target = destination.BaseUri.GetLeftPart(UriPartial.Authority) +
-                destination.BaseUri.AbsolutePath.TrimEnd('/') + path + query;
-            proxyRequest.RequestUri = new Uri(target,
-                new UriCreationOptions { DangerousDisablePathAndQueryCanonicalization = true });
+            proxyRequest.RequestUri = target;
         }
     }
 }

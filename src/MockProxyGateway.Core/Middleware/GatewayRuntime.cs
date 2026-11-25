@@ -53,7 +53,8 @@ internal sealed partial class GatewayRuntime : IDisposable
             context.Response.StatusCode = 404;
             return;
         }
-        if (!GatewayPaths.IsSafe(remaining.Value) || (!string.IsNullOrEmpty(rawPath) &&
+        if (!GatewayPaths.IsEscapedTargetPart(context.Request.QueryString.Value ?? "", query: true) ||
+            !GatewayPaths.IsSafe(remaining.Value) || (!string.IsNullOrEmpty(rawPath) &&
             (!GatewayPaths.IsSafe(rawPath) || !GatewayPaths.IsEscapedTargetPart(rawPath, query: false))))
         {
             context.Response.StatusCode = 400;
@@ -169,12 +170,20 @@ internal sealed partial class GatewayRuntime : IDisposable
             context.Response.StatusCode = 403;
             return false;
         }
-        var authentication = await evaluator.AuthenticateAsync(policy, context).ConfigureAwait(false);
-        var result = await evaluator.AuthorizeAsync(policy, authentication, context, context).ConfigureAwait(false);
-        if (result.Succeeded)
-            return true;
-        context.Response.StatusCode = result.Challenged ? 401 : 403;
-        return false;
+        var originalPrincipal = context.User;
+        try
+        {
+            var authentication = await evaluator.AuthenticateAsync(policy, context).ConfigureAwait(false);
+            var result = await evaluator.AuthorizeAsync(policy, authentication, context, context).ConfigureAwait(false);
+            if (result.Succeeded)
+                return true;
+            context.Response.StatusCode = result.Challenged ? 401 : 403;
+            return false;
+        }
+        finally
+        {
+            context.User = originalPrincipal;
+        }
     }
 
     private static async Task MockAsync(HttpContext context, MockResponse response)
