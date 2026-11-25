@@ -127,9 +127,9 @@ Negated terms are explicitly grouped before library evaluation to preserve NOT
 precedence. One outer recursive descent may precede, follow or contain the
 single filter. A predicate query may contain one descent, such as
 `@..tag` or `count(@..tag)`; such queries are non-singular. Nested filters,
-other functions and repeated descent within a query are rejected. The pinned JsonPath.Net 3.0.2
-`length()` counts text elements instead of Unicode scalar values for strings;
-it is not admitted until RFC-correct behavior can be provided.
+other functions and repeated descent within a query are rejected. The locked JsonPath.Net version is 2.2.0 (MIT). `length()` is not admitted
+until RFC-correct Unicode scalar counting and bounded evaluation are verified
+against the actual locked dependency.
 The request budget is charged before evaluation for body nodes multiplied by
 the union product; when descent is present, the charge also accounts for
 descendant traversal and every subsequent segment. Filters conservatively
