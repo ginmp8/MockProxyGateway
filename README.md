@@ -323,4 +323,4 @@ The first release focuses on incoming HTTP middleware, declarative matching, moc
 
 ## License
 
-A repository license has not yet been selected. Do not assume a public repository grants a license to redistribute or reuse its contents.
+MockProxyGateway is licensed under the [MIT License](LICENSE).
