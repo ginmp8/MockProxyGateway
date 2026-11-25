@@ -356,6 +356,45 @@ public sealed class GatewayTests
         Assert.True(System.Diagnostics.Stopwatch.GetElapsedTime(started) >= TimeSpan.FromMilliseconds(75));
     }
 
+    [Theory]
+    [InlineData("header", "X-Flag", "all", "lower", 201)]
+    [InlineData("header", "X-Flag", "any", "mixed", 201)]
+    [InlineData("header", "X-Flag", "all", "mixed", 404)]
+    [InlineData("query", "Flag", "all", "lower", 201)]
+    [InlineData("cookie", "Flag", "any", "lower", 404)]
+    [InlineData("cookie", "flag", "any", "lower", 201)]
+    public async Task SourceNameCasingAndRepeatedValueQuantifiers(string source, string key, string quantifier, string input, int expected)
+    {
+        var rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"default":{"mode":"mock","response":{"statusCode":404}},
+             "rules":[{"id":"match","priority":1,"conditions":{"source":"SOURCE","key":"KEY","operator":"equals","value":"yes","quantifier":"QUANTIFIER"},
+             "action":{"mode":"mock","response":{"statusCode":201}}}]}}}
+            """.Replace("SOURCE", source, StringComparison.Ordinal).Replace("KEY", key, StringComparison.Ordinal)
+            .Replace("QUANTIFIER", quantifier, StringComparison.Ordinal);
+        await using var fixture = await Fixture.StartAsync(rules);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/mock-proxy/test/check?flag=yes&FLAG=yes");
+        request.Headers.TryAddWithoutValidation("x-flag", input == "mixed" ? new[] { "yes", "no" } : new[] { "yes", "yes" });
+        request.Headers.TryAddWithoutValidation("Cookie", "flag=yes");
+        using var response = await fixture.Client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal((HttpStatusCode)expected, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("{\"Value\":42}", 404)]
+    [InlineData("{\"value\":42}", 201)]
+    public async Task JsonPropertyNamesAreCaseSensitive(string json, int expected)
+    {
+        const string rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"default":{"mode":"mock","response":{"statusCode":404}},
+             "rules":[{"id":"match","priority":1,"conditions":{"source":"body","key":"$.value","operator":"equals","value":42},
+             "action":{"mode":"mock","response":{"statusCode":201}}}]}}}
+            """;
+        await using var fixture = await Fixture.StartAsync(rules);
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+        using var response = await fixture.Client.PostAsync("/mock-proxy/test/check", content, TestContext.Current.CancellationToken);
+        Assert.Equal((HttpStatusCode)expected, response.StatusCode);
+    }
+
     private sealed class Fixture(WebApplication app, HttpClient client, string directory) : IAsyncDisposable
     {
         public HttpClient Client { get; } = client;

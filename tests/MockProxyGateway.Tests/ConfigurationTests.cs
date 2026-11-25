@@ -547,4 +547,85 @@ public sealed class ConfigurationTests
         }
     }
 
+
+    [Fact]
+    public async Task ConcurrencyLimitFailsClosedAndReleasesAfterCancellation()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        builder.WebHost.UseTestServer();
+        builder.Services.AddAuthorization(o => o.AddPolicy("gate", p => p.RequireAssertion(async context =>
+        {
+            if (context.Resource is HttpContext request && request.Request.Headers.ContainsKey("X-Hold"))
+            {
+                entered.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, request.RequestAborted);
+            }
+            return true;
+        })));
+        builder.Services.AddMockProxyGateway(o =>
+        {
+            o.MaxConcurrentRequests = 1;
+            o.AuthorizationPolicy = "gate";
+            o.ProgrammaticRules = () => JsonElement.Parse("""
+                {"schemaVersion":1,"destinations":{},"services":{"demo":{"default":{"mode":"mock","response":{"statusCode":200,"text":"ready"}}}}}
+                """);
+        });
+        await using var app = builder.Build();
+        app.UseMockProxyGateway();
+        var ct = TestContext.Current.CancellationToken;
+        await app.StartAsync(ct);
+        using var client = app.GetTestClient();
+        using var firstCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/mock-proxy/demo/check");
+        request.Headers.Add("X-Hold", "yes");
+        var pending = client.SendAsync(request, firstCancellation.Token);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            using var rejected = await client.GetAsync("/mock-proxy/demo/check", ct);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, rejected.StatusCode);
+        }
+        finally
+        {
+            await firstCancellation.CancelAsync();
+        }
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            using var recovered = await client.GetAsync("/mock-proxy/demo/check", ct);
+            if (recovered.StatusCode == HttpStatusCode.OK)
+            {
+                Assert.Equal("ready", await recovered.Content.ReadAsStringAsync(ct));
+                return;
+            }
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, recovered.StatusCode);
+            await Task.Delay(50, ct);
+        }
+        Assert.Fail("Cancelled request did not release its concurrency slot.");
+    }
+
+    [Fact]
+    public async Task MissingSelectedFileAndDefaultEnvironmentGateRejectActivation()
+    {
+        var directory = Directory.CreateTempSubdirectory("mock-proxy-missing-").FullName;
+        try
+        {
+            var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development", ContentRootPath = directory });
+            builder.Services.AddMockProxyGateway();
+            await using var app = builder.Build();
+            Assert.Throws<InvalidOperationException>(() => app.UseMockProxyGateway());
+
+            var other = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Staging", ContentRootPath = directory });
+            other.Services.AddMockProxyGateway(o => o.ProgrammaticRules = () => JsonElement.Parse(Rules));
+            await using var staging = other.Build();
+            Assert.Throws<InvalidOperationException>(() => staging.UseMockProxyGateway());
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
 }

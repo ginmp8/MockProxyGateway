@@ -112,33 +112,42 @@ public sealed class ForwardingTests
         await using var upstream = await Upstream.StartAsync();
         var json = JsonNode.Parse("""
             {"schemaVersion":1,"destinations":{"restricted":{"baseUrl":"http://127.0.0.1/"},
-              "permitted":{"baseUrl":"http://127.0.0.1/","forwardCredentials":["Authorization","Cookie"],"removeHeaders":["X-Test-Scenario"],"removeQuery":["simulate"]}},
+              "permitted":{"baseUrl":"http://127.0.0.1/","forwardCredentials":["Authorization","Cookie","X-Private-Token"],"removeHeaders":["X-Test-Scenario"],"removeQuery":["simulate"]}},
               "services":{"a":{"default":{"mode":"proxy","destination":"restricted"}},
                           "b":{"default":{"mode":"proxy","destination":"permitted"}}}}
             """)!;
         json["destinations"]!["restricted"]!["baseUrl"] = upstream.BaseUrl + "restricted/";
         json["destinations"]!["permitted"]!["baseUrl"] = upstream.BaseUrl + "permitted/";
-        await using var gateway = await StartGatewayAsync(json, upstream);
+        await using var gateway = await StartGatewayAsync(json, upstream,
+            configure: o => o.CredentialHeaderNames = ["X-Private-Token"]);
         using var client = gateway.GetTestClient();
         var ct = TestContext.Current.CancellationToken;
 
         using var restricted = CreateRequest("GET", "/mock-proxy/a/resource?simulate=keep", null, "keep");
         restricted.Headers.TryAddWithoutValidation("Authorization", "Bearer synthetic-token");
         restricted.Headers.TryAddWithoutValidation("Cookie", "synthetic=cookie");
+        restricted.Headers.TryAddWithoutValidation("X-Private-Token", "synthetic-private");
+        restricted.Headers.TryAddWithoutValidation("X-Forwarded-For", "192.0.2.1");
+        restricted.Headers.Host = "untrusted.example.test";
         using var restrictedResponse = await client.SendAsync(restricted, ct);
         Assert.Equal(HttpStatusCode.Created, restrictedResponse.StatusCode);
         Assert.Equal("", upstream.Requests.Last().Authorization);
         Assert.Equal("", upstream.Requests.Last().Cookie);
         Assert.Equal("keep", upstream.Requests.Last().Scenario);
+        Assert.Equal("", upstream.Requests.Last().PrivateToken);
+        Assert.Equal("", upstream.Requests.Last().ForwardedFor);
+        Assert.Equal(new Uri(upstream.BaseUrl).Authority, upstream.Requests.Last().Host);
 
         using var permitted = CreateRequest("GET", "/mock-proxy/b/resource?simulate=remove&business=keep", null, "remove");
         permitted.Headers.TryAddWithoutValidation("Authorization", "Bearer synthetic-token");
         permitted.Headers.TryAddWithoutValidation("Cookie", "synthetic=cookie");
+        permitted.Headers.TryAddWithoutValidation("X-Private-Token", "synthetic-private");
         using var permittedResponse = await client.SendAsync(permitted, ct);
         Assert.Equal(HttpStatusCode.Created, permittedResponse.StatusCode);
         var actual = upstream.Requests.Last();
         Assert.Equal("Bearer synthetic-token", actual.Authorization);
         Assert.Equal("synthetic=cookie", actual.Cookie);
+        Assert.Equal("synthetic-private", actual.PrivateToken);
         Assert.Equal("", actual.Scenario);
         Assert.Equal("/permitted/resource?business=keep", actual.Target);
 
@@ -726,6 +735,50 @@ public sealed class ForwardingTests
             x => x.Message.Contains("synthetic-secret", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task InspectedJsonPreservesExactBytesAndBusinessHeadersAtRealUpstream()
+    {
+        var received = new TaskCompletionSource<(byte[] Body, string Method, string ContentType, string Header)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var upstream = await Upstream.StartAsync(async context =>
+        {
+            using var bytes = new MemoryStream();
+            await context.Request.Body.CopyToAsync(bytes, context.RequestAborted);
+            received.TrySetResult((bytes.ToArray(), context.Request.Method, context.Request.ContentType!,
+                context.Request.Headers["X-Business-Reference"].ToString()));
+            context.Response.StatusCode = 202;
+            context.Response.Headers["X-Real-Response"] = "kept";
+            await context.Response.WriteAsync("real-body", context.RequestAborted);
+        });
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"local":{"baseUrl":"http://127.0.0.1/"}},
+              "services":{"a":{"default":{"mode":"proxy","destination":"local"},"rules":[
+               {"id":"inspect","priority":1,"conditions":{"source":"body","key":"$.number","operator":"equals","value":42},
+                "action":{"mode":"mock","response":{"statusCode":200}}}
+              ]}}}
+            """)!;
+        rules["destinations"]!["local"]!["baseUrl"] = upstream.BaseUrl;
+        await using var gateway = await StartGatewayAsync(rules, upstream);
+        using var client = gateway.GetTestClient();
+        var ct = TestContext.Current.CancellationToken;
+        var bytes = Encoding.UTF8.GetBytes("{\r\n \"name\" : \"café\", \"escaped\" : \"a\\/b\", \"number\" : 41 }\n");
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/mock-proxy/a/check")
+        {
+            Content = new ByteArrayContent(bytes)
+        };
+        request.Content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse("application/json; charset=utf-8");
+        request.Headers.Add("X-Business-Reference", "synthetic-123");
+        using var response = await client.SendAsync(request, ct);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal("real-body", await response.Content.ReadAsStringAsync(ct));
+        Assert.Equal("kept", response.Headers.GetValues("X-Real-Response").Single());
+        var actual = await received.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+        Assert.Equal(bytes, actual.Body);
+        Assert.Equal("PUT", actual.Method);
+        Assert.Equal("application/json; charset=utf-8", actual.ContentType);
+        Assert.Equal("synthetic-123", actual.Header);
+    }
+
     private static HttpRequestMessage CreateRequest(string method, string url, string? body, string? scenario = null)
     {
         var request = new HttpRequestMessage(new HttpMethod(method), url);
@@ -772,7 +825,8 @@ public sealed class ForwardingTests
         }
     }
 
-    private sealed record Captured(string Method, string Target, string Body, string Authorization, string Cookie, string Scenario);
+    private sealed record Captured(string Method, string Target, string Body, string Authorization, string Cookie, string Scenario,
+        string PrivateToken, string ForwardedFor, string Host);
 
     private sealed class Upstream(WebApplication app, ConcurrentQueue<Captured> requests) : IAsyncDisposable
     {
@@ -796,7 +850,9 @@ public sealed class ForwardingTests
                 var body = await reader.ReadToEndAsync(context.RequestAborted);
                 requests.Enqueue(new Captured(context.Request.Method, context.Features.Get<IHttpRequestFeature>()!.RawTarget,
                     body, context.Request.Headers.Authorization.ToString(), context.Request.Headers.Cookie.ToString(),
-                    context.Request.Headers["X-Test-Scenario"].ToString()));
+                    context.Request.Headers["X-Test-Scenario"].ToString(),
+                    context.Request.Headers["X-Private-Token"].ToString(), context.Request.Headers["X-Forwarded-For"].ToString(),
+                    context.Request.Host.Value));
                 if (context.Request.Path.Value!.EndsWith("/redirect", StringComparison.Ordinal))
                 {
                     context.Response.StatusCode = 302;

@@ -4,7 +4,7 @@
 
 MockProxyGateway is a lightweight, configuration-driven service virtualization gateway for .NET 10 and ASP.NET Core. Its goal is to let developers exercise real application flows even when external HTTP dependencies are unavailable, without replacing every integration with a mock or changing business logic.
 
-> **Project status: initial implementation in progress.** Follow [issue #1](https://github.com/ginmp8/MockProxyGateway/issues/1) and [draft PR #2](https://github.com/ginmp8/MockProxyGateway/pull/2). The Core library, optional host, integration tests, schema and CI are present on the feature branch. Release acceptance and package/Docker smoke evidence are still required; no published package or production readiness is claimed.
+> **Project status: development preview.** Follow [issue #1](https://github.com/ginmp8/MockProxyGateway/issues/1) and [draft PR #2](https://github.com/ginmp8/MockProxyGateway/pull/2). Core, the optional host, integration tests, schema and CI are implemented. [CI run 45549194952](https://github.com/ginmp8/MockProxyGateway/actions/runs/45549194952) verified 101 tests, package inspection, local-feed consumption, the pinned example and standalone Docker on its own commit. The PR checkpoint records current-HEAD acceptance. No public package has been published; this is a non-production test/integration tool.
 
 ## Why MockProxyGateway?
 
@@ -44,7 +44,14 @@ This middleware handles **incoming HTTP requests**. It does not automatically in
 
 Prerequisites: .NET 10 SDK, an ASP.NET Core application, an approved non-production environment, and valid host-owned rules.
 
-Reference Core from source or build the package locally and consume it from a trusted local feed. Nothing is published by the build. See the verification commands below.
+Reference Core from source or build the package locally and consume it from a trusted local feed. Nothing is published by the build. After the Release build and pack steps below, run these commands from the consuming project's directory (replace the local feed path with the absolute path to this checkout's artifacts/packages):
+
+```bash
+dotnet add package MockProxyGateway --version 0.1.0-preview.1 --no-restore
+dotnet restore --source /absolute/path/to/MockProxyGateway/artifacts/packages --source https://api.nuget.org/v3/index.json
+```
+
+The package is not available from a public feed. Use your organization's approved dependency source instead of nuget.org where required. The package contains only Core and declares its runtime dependencies.
 
 Register the library in the consuming application's `Program.cs`:
 
