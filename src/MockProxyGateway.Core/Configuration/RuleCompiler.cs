@@ -187,7 +187,8 @@ internal sealed partial class RuleCompiler(GatewayOptions options, string conten
             // Admit RFC 9535 child selectors only. No descendant, filter, union or slice expansion.
             if (key!.Length > 256 || !BoundedJsonPath().IsMatch(key))
                 throw Invalid("Unsupported or overly complex JSONPath.");
-            jsonPath = JsonPath.Parse(key);
+            if (!JsonPath.TryParse(key, out jsonPath))
+                throw Invalid("Invalid JSONPath selector.");
         }
         return new Condition("leaf", [], source, key, op, hasValue ? operand.Clone() : default,
             quantifier, ignoreCase, regex, jsonPath);

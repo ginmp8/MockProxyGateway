@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -165,4 +166,281 @@ public sealed class ConfigurationTests
         Assert.True(denied.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden);
         Assert.Equal("normal", await client.GetStringAsync("/api/health", ct));
     }
+
+    [Fact]
+    public async Task RegistrationWithoutMiddlewareIsInertEvenInProduction()
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Production" });
+        builder.WebHost.UseTestServer();
+        builder.Services.AddMockProxyGateway(o => o.ProgrammaticRules = () => throw new InvalidOperationException("must-not-read"));
+        await using var app = builder.Build();
+        app.MapGet("/mock-proxy/demo/check", () => "host-owned");
+        var ct = TestContext.Current.CancellationToken;
+        await app.StartAsync(ct);
+        using var client = app.GetTestClient();
+        Assert.Equal("host-owned", await client.GetStringAsync("/mock-proxy/demo/check", ct));
+    }
+
+    [Fact]
+    public async Task EnvironmentAndProgrammaticOptionsAndExplicitPrefixHavePrecedence()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var directory = Directory.CreateTempSubdirectory("mock-proxy-precedence-").FullName;
+        try
+        {
+            var file = Path.Combine(directory, "mounted.json");
+            await File.WriteAllTextAsync(file, """
+                {"schemaVersion":1,"destinations":{},"services":{"demo":{"default":{"mode":"mock","response":{"statusCode":200,"text":"selected"}}}}}
+                """, ct);
+            await File.WriteAllTextAsync(Path.Combine(directory, "appsettings.json"), """
+                {"MockProxyGateway":{"Enabled":false,"Prefix":"/base","ConfigurationFile":"missing.json"}}
+                """, ct);
+            await File.WriteAllTextAsync(Path.Combine(directory, "appsettings.Staging.json"), """
+                {"MockProxyGateway":{"Enabled":true,"Prefix":"/environment","AllowedEnvironments":["Staging"]}}
+                """, ct);
+            var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Staging", ContentRootPath = directory });
+            builder.WebHost.UseTestServer();
+            builder.Services.AddMockProxyGateway(o =>
+            {
+                o.ConfigurationFile = file;
+                o.Prefix = "/programmatic";
+            });
+            await using var app = builder.Build();
+            app.UseMockProxyGateway("/explicit");
+            app.MapFallback(() => "normal");
+            await app.StartAsync(ct);
+            using var client = app.GetTestClient();
+            Assert.Equal("selected", await client.GetStringAsync("/explicit/demo/check", ct));
+            Assert.Equal("normal", await client.GetStringAsync("/base/demo/check", ct));
+            Assert.Equal("normal", await client.GetStringAsync("/environment/demo/check", ct));
+            Assert.Equal("normal", await client.GetStringAsync("/programmatic/demo/check", ct));
+            Assert.Equal("normal", await client.GetStringAsync("/mock-proxy/demo/check", ct));
+            Assert.Equal("normal", await client.GetStringAsync("/explicit-other/demo/check", ct));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("File")]
+    [InlineData("Inline")]
+    [InlineData("Configuration")]
+    [InlineData("ExternalConfiguration")]
+    [InlineData("Programmatic")]
+    public async Task SelectedSourcesReloadValidUpdatesAndRetainLastGood(string source)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var directory = Directory.CreateTempSubdirectory("mock-proxy-reload-").FullName;
+        WebApplication? app = null;
+        const string original = """
+            {"schemaVersion":1,"destinations":{},"services":{"demo":{"default":{"mode":"mock","response":{"statusCode":200,"text":"old"}}}}}
+            """;
+        const string invalid = """{"schemaVersion":2,"destinations":{},"services":{}}""";
+        var changed = original.Replace("\"old\"", "\"new\"", StringComparison.Ordinal);
+        var published = original;
+        var external = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["RulesJson"] = original }).Build();
+        try
+        {
+            await WriteAsync(original);
+            var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development", ContentRootPath = directory });
+            builder.WebHost.UseTestServer();
+            if (source == "ExternalConfiguration")
+                builder.Services.AddMockProxyGateway(external);
+            else if (source == "Programmatic")
+                builder.Services.AddMockProxyGateway(o => o.ProgrammaticRules = () => JsonElement.Parse(Volatile.Read(ref published)));
+            else
+                builder.Services.AddMockProxyGateway(o => o.RuleSource = source);
+            app = builder.Build();
+            app.UseMockProxyGateway();
+            await app.StartAsync(ct);
+            using var client = app.GetTestClient();
+            Assert.Equal("old", await client.GetStringAsync("/mock-proxy/demo/check", ct));
+            await WriteAsync(invalid);
+            await Task.Delay(1400, ct);
+            Assert.Equal("old", await client.GetStringAsync("/mock-proxy/demo/check", ct));
+            await WriteAsync(changed);
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (DateTime.UtcNow < deadline)
+            {
+                if (await client.GetStringAsync("/mock-proxy/demo/check", ct) == "new")
+                    return;
+                await Task.Delay(100, ct);
+            }
+            Assert.Fail("Selected source did not reload its valid document.");
+
+            async Task WriteAsync(string json)
+            {
+                if (source == "Programmatic")
+                    Volatile.Write(ref published, json);
+                else if (source == "ExternalConfiguration")
+                    external["RulesJson"] = json;
+                else
+                {
+                    var path = Path.Combine(directory, source == "File" ? "mock-proxy-gateway.json" : "appsettings.json");
+                    var content = source switch
+                    {
+                        "Inline" => new JsonObject { ["MockProxyGateway"] = new JsonObject { ["Rules"] = JsonNode.Parse(json) } }.ToJsonString(),
+                        "Configuration" => new JsonObject { ["MockProxyGateway"] = new JsonObject { ["RulesJson"] = json } }.ToJsonString(),
+                        _ => json
+                    };
+                    var candidate = path + ".next";
+                    await File.WriteAllTextAsync(candidate, content, ct);
+                    File.Move(candidate, path, overwrite: true);
+                }
+            }
+        }
+        finally
+        {
+            if (app is not null)
+                await app.DisposeAsync();
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExplicitSerializedRulesRemainAuthoritativeEvenWhenInitialValueEqualsHostValue()
+    {
+        const string original = """
+            {"schemaVersion":1,"destinations":{},"services":{"demo":{"default":{"mode":"mock","response":{"statusCode":200,"text":"original"}}}}}
+            """;
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        builder.WebHost.UseTestServer();
+        builder.Configuration["MockProxyGateway:RulesJson"] = original;
+        builder.Services.AddMockProxyGateway(o =>
+        {
+            o.RuleSource = "Configuration";
+            o.RulesJson = original;
+        });
+        await using var app = builder.Build();
+        app.UseMockProxyGateway();
+        var ct = TestContext.Current.CancellationToken;
+        await app.StartAsync(ct);
+        using var client = app.GetTestClient();
+        builder.Configuration["MockProxyGateway:RulesJson"] = original.Replace("original", "wrong", StringComparison.Ordinal);
+        await Task.Delay(1400, ct);
+        Assert.Equal("original", await client.GetStringAsync("/mock-proxy/demo/check", ct));
+    }
+
+    [Fact]
+    public async Task InFlightRequestRetainsOriginalSnapshotAcrossReload()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var current = """
+            {"schemaVersion":1,"destinations":{},"services":{"demo":{"default":{"mode":"mock","response":{"statusCode":200,"text":"old"}}}}}
+            """;
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        builder.WebHost.UseTestServer();
+        builder.Services.AddAuthorization(o => o.AddPolicy("gate", p => p.RequireAssertion(async context =>
+        {
+            if (context.Resource is HttpContext request && request.Request.Headers.ContainsKey("X-Hold"))
+            {
+                entered.TrySetResult();
+                await release.Task.WaitAsync(request.RequestAborted);
+            }
+            return true;
+        })));
+        builder.Services.AddMockProxyGateway(o =>
+        {
+            o.AuthorizationPolicy = "gate";
+            o.ProgrammaticRules = () => JsonElement.Parse(Volatile.Read(ref current));
+        });
+        await using var app = builder.Build();
+        app.UseMockProxyGateway();
+        var ct = TestContext.Current.CancellationToken;
+        await app.StartAsync(ct);
+        using var client = app.GetTestClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/mock-proxy/demo/check");
+        request.Headers.Add("X-Hold", "yes");
+        var pending = client.SendAsync(request, ct);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            Volatile.Write(ref current, current.Replace("\"old\"", "\"new\"", StringComparison.Ordinal));
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            var updated = false;
+            while (DateTime.UtcNow < deadline)
+            {
+                if (await client.GetStringAsync("/mock-proxy/demo/check", ct) == "new")
+                {
+                    updated = true;
+                    break;
+                }
+                await Task.Delay(100, ct);
+            }
+            Assert.True(updated);
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+        using var old = await pending;
+        Assert.Equal("old", await old.Content.ReadAsStringAsync(ct));
+    }
+
+    [Fact]
+    public async Task MissingConfiguredPolicyDeniesGatewayWithoutAffectingHostRoutes()
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        builder.WebHost.UseTestServer();
+        builder.Services.AddMockProxyGateway(o =>
+        {
+            o.AuthorizationPolicy = "not-registered";
+            o.ProgrammaticRules = () => JsonElement.Parse(Rules);
+        });
+        await using var app = builder.Build();
+        app.UseMockProxyGateway();
+        app.MapGet("/api/health", () => "normal");
+        var ct = TestContext.Current.CancellationToken;
+        await app.StartAsync(ct);
+        using var client = app.GetTestClient();
+        using var content = new StringContent("{", Encoding.UTF8, "application/json");
+        using var denied = await client.PostAsync("/mock-proxy/demo/check", content, ct);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        Assert.Equal("normal", await client.GetStringAsync("/api/health", ct));
+    }
+
+    [Fact]
+    public async Task SymlinkFixtureOutsideTrustedRootIsRejected()
+    {
+        var directory = Directory.CreateTempSubdirectory("mock-proxy-link-").FullName;
+        try
+        {
+            var root = Directory.CreateDirectory(Path.Combine(directory, "fixtures")).FullName;
+            var outside = Path.Combine(directory, "outside.txt");
+            await File.WriteAllTextAsync(outside, "synthetic", TestContext.Current.CancellationToken);
+            File.CreateSymbolicLink(Path.Combine(root, "link.txt"), outside);
+            var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development", ContentRootPath = directory });
+            builder.Services.AddMockProxyGateway(o =>
+            {
+                o.FixtureRoot = root;
+                o.ProgrammaticRules = () => JsonElement.Parse("""
+                    {"schemaVersion":1,"destinations":{},"services":{"fixture":{"default":{"mode":"mock","response":{"statusCode":200,"bodyFile":"link.txt"}}}}}
+                    """);
+            });
+            await using var app = builder.Build();
+            Assert.Throws<InvalidOperationException>(() => app.UseMockProxyGateway());
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("File")]
+    [InlineData("Configuration")]
+    [InlineData("Inline")]
+    public async Task ConflictingConfiguredRuleSourcesAreRejected(string source)
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        builder.Configuration["MockProxyGateway:RulesJson"] = Rules;
+        builder.Configuration["MockProxyGateway:Rules:schemaVersion"] = "1";
+        builder.Services.AddMockProxyGateway(o => o.RuleSource = source);
+        await using var app = builder.Build();
+        Assert.Throws<InvalidOperationException>(() => app.UseMockProxyGateway());
+    }
+
 }

@@ -17,7 +17,14 @@ public static class MockProxyGatewayServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         services.AddOptions<GatewayOptions>().BindConfiguration("MockProxyGateway");
         if (configure is not null)
-            services.Configure(configure);
+        {
+            services.Configure<GatewayOptions>(options =>
+            {
+                var assignments = options.RulesJsonAssignments;
+                configure(options);
+                options.HasExplicitRulesJson |= options.RulesJsonAssignments != assignments;
+            });
+        }
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddSingleton<RuleStore>();
         services.TryAddSingleton<ProxyTransport>();
@@ -40,7 +47,8 @@ public static class MockProxyGatewayServiceCollectionExtensions
                 var sectionValue = (ruleConfiguration as IConfigurationSection)?.Value;
                 var documentValue = ruleConfiguration["RulesJson"];
                 if ((sectionValue is not null && documentValue is not null) ||
-                    ruleConfiguration.GetSection("Rules").GetChildren().Any())
+                    ruleConfiguration.GetChildren().Any(x => !string.Equals(x.Key, "RulesJson", StringComparison.OrdinalIgnoreCase)) ||
+                    ruleConfiguration.GetSection("RulesJson").GetChildren().Any())
                     throw new InvalidOperationException("Conflicting supplied rule sources.");
                 return JsonElement.Parse(sectionValue ?? documentValue ??
                     throw new InvalidOperationException("A complete serialized rule document is required."));

@@ -13,8 +13,20 @@ public sealed class GatewayOptions
     public string RuleSource { get; set; } = "File";
     /// <summary>Absolute or content-root-relative rule file.</summary>
     public string ConfigurationFile { get; set; } = "mock-proxy-gateway.json";
+    private string? _rulesJson;
+    internal int RulesJsonAssignments { get; private set; }
+    internal bool HasExplicitRulesJson { get; set; }
+
     /// <summary>Complete serialized JSON for the Configuration source.</summary>
-    public string? RulesJson { get; set; }
+    public string? RulesJson
+    {
+        get => _rulesJson;
+        set
+        {
+            _rulesJson = value;
+            RulesJsonAssignments++;
+        }
+    }
     /// <summary>Explicit typed programmatic provider, overriding configured source selection.</summary>
     public Func<JsonElement>? ProgrammaticRules { get; set; }
     /// <summary>Check the selected document for updates.</summary>

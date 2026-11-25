@@ -20,6 +20,8 @@ internal sealed partial class RuleStore : IAsyncDisposable
     private RuleSnapshot _snapshot;
     private string? _attemptedHash;
     private readonly string? _explicitSerialized;
+    private readonly bool _hasExplicitSerialized;
+    private string? _rejectedHash;
     private bool _lastFailed;
     private readonly Task _reload;
 
@@ -29,7 +31,9 @@ internal sealed partial class RuleStore : IAsyncDisposable
         _environment = environment;
         _configuration = configuration;
         _logger = logger;
-        if (!string.Equals(_options.RulesJson, configuration["MockProxyGateway:RulesJson"], StringComparison.Ordinal))
+        _hasExplicitSerialized = _options.HasExplicitRulesJson ||
+            !string.Equals(_options.RulesJson, configuration["MockProxyGateway:RulesJson"], StringComparison.Ordinal);
+        if (_hasExplicitSerialized)
             _explicitSerialized = _options.RulesJson;
         if (_options.AllowLoopbackForTests && !environment.IsDevelopment() &&
             !string.Equals(environment.EnvironmentName, "Testing", StringComparison.OrdinalIgnoreCase))
@@ -54,14 +58,14 @@ internal sealed partial class RuleStore : IAsyncDisposable
     {
         byte[] bytes;
         if (_options.ProgrammaticRules is not null)
-            bytes = Encoding.UTF8.GetBytes(_options.ProgrammaticRules().GetRawText());
+            bytes = ReadProgrammatic();
         else if (string.Equals(_options.RuleSource, "Inline", StringComparison.OrdinalIgnoreCase))
             bytes = ReadInline();
         else if (string.Equals(_options.RuleSource, "Configuration", StringComparison.OrdinalIgnoreCase))
         {
             if (_configuration.GetSection("MockProxyGateway:Rules").Exists())
                 throw new InvalidOperationException("Conflicting inline and serialized rule sources.");
-            var json = _explicitSerialized ?? _configuration["MockProxyGateway:RulesJson"] ??
+            var json = (_hasExplicitSerialized ? _explicitSerialized : _configuration["MockProxyGateway:RulesJson"]) ??
                 throw new InvalidOperationException("Complete serialized rule document required.");
             bytes = Encoding.UTF8.GetBytes(json);
         }
@@ -84,6 +88,20 @@ internal sealed partial class RuleStore : IAsyncDisposable
         if (bytes.Length > MaximumDocumentBytes)
             throw new InvalidOperationException("Rule document too large.");
         return bytes;
+    }
+
+    private byte[] ReadProgrammatic()
+    {
+        try
+        {
+            return Encoding.UTF8.GetBytes(_options.ProgrammaticRules!().GetRawText());
+        }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or AccessViolationException))
+        {
+            // A caller-owned provider can fail for reasons outside the built-in configuration
+            // exception types. Never terminate reload or leak provider exception data.
+            throw new InvalidOperationException("Programmatic rule provider failed.");
+        }
     }
 
     private byte[] ReadInline()
@@ -145,12 +163,17 @@ internal sealed partial class RuleStore : IAsyncDisposable
                         if (_lastFailed)
                         {
                             _lastFailed = false;
+                            _rejectedHash = null;
                             Loaded(_logger, Current.Version);
                         }
                         continue;
                     }
+                    if (hash == _rejectedHash)
+                        continue;
+                    _rejectedHash = hash;
                     var next = new RuleCompiler(_options, _environment.ContentRootPath).Compile(bytes, Current.Version + 1);
                     _attemptedHash = hash;
+                    _rejectedHash = null;
                     Volatile.Write(ref _snapshot, next);
                     _lastFailed = false;
                     Loaded(_logger, next.Version);

@@ -53,6 +53,8 @@ jobs:
           PY
       - name: Pack Core
         run: dotnet pack src/MockProxyGateway.Core/MockProxyGateway.Core.csproj -c Release --no-build --no-restore -o artifacts/packages
+      - name: Inspect packed assembly and runtime dependency licenses
+        run: python3 scripts/inspect-package.py
       - name: Package-only embedded consumer
         run: bash scripts/package-smoke.sh
       - name: Standalone Docker smoke

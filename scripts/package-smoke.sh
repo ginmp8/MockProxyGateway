@@ -36,6 +36,7 @@ start_host() {
 }
 start_host /mock-proxy
 test "$(curl -fsS http://127.0.0.1:5182/mock-proxy/demo/health)" = mock-health
+test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:5182/mock-proxy-other/demo/health)" = 404
 test "$(curl -fsS http://127.0.0.1:5182/mock-proxy/demo/ping.txt)" = local-upstream
 test "$(curl -fsS http://127.0.0.1:5182/api/health)" = normal
 kill "$host_pid"
