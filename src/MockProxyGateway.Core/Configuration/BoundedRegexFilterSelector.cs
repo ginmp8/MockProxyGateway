@@ -62,28 +62,7 @@ internal sealed class BoundedRegexFilterSelector(JsonPath argument, Regex regex,
             }
             else if (current == '[')
             {
-                var start = ++index;
-                while (index < pattern.Length && (char.IsAsciiLetterOrDigit(pattern[index]) || pattern[index] == '-'))
-                    index++;
-                if (index == start || index == pattern.Length || pattern[index] != ']')
-                    throw Invalid();
-                var members = pattern.AsSpan(start, index - start);
-                var member = members[0] == '-' ? 1 : 0;
-                while (member < members.Length)
-                {
-                    if (members[member] == '-' && member == members.Length - 1)
-                        break;
-                    if (!char.IsAsciiLetterOrDigit(members[member++]))
-                        throw Invalid();
-                    if (member + 1 < members.Length && members[member] == '-')
-                    {
-                        member++;
-                        if (!char.IsAsciiLetterOrDigit(members[member++]) || members[member - 3] > members[member - 1])
-                            throw Invalid();
-                    }
-                }
-                mapped.Append('[').Append(members).Append(']');
-                index++;
+                ReadCharacterClass(pattern, ref index, mapped);
             }
             else if (current == '\\')
             {
@@ -123,6 +102,153 @@ internal sealed class BoundedRegexFilterSelector(JsonPath argument, Regex regex,
         var source = fullMatch ? @"\A(?:" + mapped + @")\z" : mapped.ToString();
         return new Regex(source, RegexOptions.CultureInvariant | RegexOptions.NonBacktracking,
             TimeSpan.FromMilliseconds(25));
+    }
+
+    // Work in scalar intervals, not UTF-16 code units. Negation must never
+    // match half a supplementary character, including in unanchored search.
+    private static void ReadCharacterClass(string pattern, ref int index, StringBuilder mapped)
+    {
+        index++;
+        var negate = index < pattern.Length && pattern[index] == '^';
+        if (negate)
+            index++;
+        var ranges = new List<(int First, int Last)>();
+        if (index < pattern.Length && pattern[index] == '-')
+        {
+            ranges.Add(('-', '-'));
+            index++;
+        }
+
+        while (index < pattern.Length && pattern[index] != ']')
+        {
+            if (pattern[index] == '-' && index + 1 < pattern.Length && pattern[index + 1] == ']')
+            {
+                ranges.Add(('-', '-'));
+                index++;
+                break;
+            }
+
+            var first = ReadClassScalar(pattern, ref index);
+            var last = first;
+            if (index + 1 < pattern.Length && pattern[index] == '-' && pattern[index + 1] != ']')
+            {
+                index++;
+                last = ReadClassScalar(pattern, ref index);
+                if (last < first)
+                    throw Invalid();
+            }
+            ranges.Add((first, last));
+            if (ranges.Count > 32)
+                throw Invalid();
+        }
+        if (ranges.Count == 0 || index >= pattern.Length || pattern[index++] != ']')
+            throw Invalid();
+
+        // Merge intervals before complementing and translating them. Split at
+        // the surrogate hole even when the original range crosses that hole.
+        ranges.Sort((left, right) => left.First.CompareTo(right.First));
+        var merged = new List<(int First, int Last)>();
+        foreach (var range in ranges)
+        {
+            if (merged.Count > 0 && range.First <= merged[^1].Last + 1)
+                merged[^1] = (merged[^1].First, Math.Max(merged[^1].Last, range.Last));
+            else
+                merged.Add(range);
+        }
+
+        if (negate)
+        {
+            ranges.Clear();
+            var cursor = 0;
+            foreach (var range in merged)
+            {
+                if (cursor < range.First)
+                    ranges.Add((cursor, range.First - 1));
+                cursor = range.Last + 1;
+            }
+            if (cursor <= 0x10FFFF)
+                ranges.Add((cursor, 0x10FFFF));
+        }
+        else
+            ranges = merged;
+
+        var alternatives = new List<string>();
+        var bmp = new StringBuilder();
+        foreach (var range in ranges)
+        {
+            AppendCodeUnitRange(bmp, range.First, Math.Min(range.Last, 0xD7FF));
+            AppendCodeUnitRange(bmp, Math.Max(range.First, 0xE000), Math.Min(range.Last, 0xFFFF));
+            if (range.Last >= 0x10000)
+                AddSupplementaryRange(alternatives, Math.Max(range.First, 0x10000), range.Last);
+        }
+        if (bmp.Length > 0)
+            alternatives.Add("[" + bmp + "]");
+        if (alternatives.Count == 0)
+        {
+            // A negated class covering every scalar cannot match any input.
+            mapped.Append(@"[\uD800-[\uD800]]");
+            return;
+        }
+        mapped.Append("(?:").AppendJoin('|', alternatives).Append(')');
+        if (mapped.Length > 4096)
+            throw Invalid();
+    }
+
+    private static int ReadClassScalar(string pattern, ref int index)
+    {
+        if (index >= pattern.Length)
+            throw Invalid();
+        if (pattern[index] == '\\')
+        {
+            if (++index >= pattern.Length)
+                throw Invalid();
+            return pattern[index++] switch
+            {
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                '(' or ')' or '*' or '+' or '-' or '.' or '?' or '[' or '\\' or ']' or '^' or '{' or '|' or '}' => pattern[index - 1],
+                _ => throw Invalid()
+            };
+        }
+        if (pattern[index] is '-' or '[' or ']' || !Rune.TryGetRuneAt(pattern, index, out var rune))
+            throw Invalid();
+        index += rune.Utf16SequenceLength;
+        return rune.Value;
+    }
+
+    private static void AddSupplementaryRange(List<string> alternatives, int first, int last)
+    {
+        var firstHigh = 0xD800 + ((first - 0x10000) >> 10);
+        var lastHigh = 0xD800 + ((last - 0x10000) >> 10);
+        var firstLow = 0xDC00 + ((first - 0x10000) & 0x3FF);
+        var lastLow = 0xDC00 + ((last - 0x10000) & 0x3FF);
+        if (firstHigh == lastHigh)
+        {
+            alternatives.Add(CodeUnitClass(firstHigh, firstHigh) + CodeUnitClass(firstLow, lastLow));
+            return;
+        }
+
+        alternatives.Add(CodeUnitClass(firstHigh, firstHigh) + CodeUnitClass(firstLow, 0xDFFF));
+        if (firstHigh + 1 < lastHigh)
+            alternatives.Add(CodeUnitClass(firstHigh + 1, lastHigh - 1) + CodeUnitClass(0xDC00, 0xDFFF));
+        alternatives.Add(CodeUnitClass(lastHigh, lastHigh) + CodeUnitClass(0xDC00, lastLow));
+    }
+
+    private static string CodeUnitClass(int first, int last)
+    {
+        var result = new StringBuilder("[");
+        AppendCodeUnitRange(result, first, last);
+        return result.Append(']').ToString();
+    }
+
+    private static void AppendCodeUnitRange(StringBuilder result, int first, int last)
+    {
+        if (first > last)
+            return;
+        result.Append(@"\u").Append(first.ToString("X4", System.Globalization.CultureInfo.InvariantCulture));
+        if (first != last)
+            result.Append('-').Append(@"\u").Append(last.ToString("X4", System.Globalization.CultureInfo.InvariantCulture));
     }
 
     private static void ReadRangeQuantifier(string pattern, ref int index, StringBuilder mapped, ref int repetitionBudget)

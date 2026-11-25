@@ -153,12 +153,11 @@ or nested length expressions and other length argument forms remain rejected.
 Standalone `match(@.name, 'test-.*')` and `search(@.name, '[A-Z]+')` use private
 selectors with constant I-Regexp patterns and singular relative/root queries.
 Supported patterns: Unicode literals (including literal ^ and $), scalar dot
-(excluding CR/LF), escaped literals, positive ASCII alphanumeric classes/ranges,
+(excluding CR/LF), escaped literals, positive and negated Unicode scalar literal classes/ranges,
 and quantifiers (*, +, ?, {n}, {n,}, {n,m}), with explicit repetition bounds at
 most 64 and a conservative product of explicit repetition expansion factors
 at most 256 (open-ended ranges charge minimum plus one). Noncapturing translation of grouping and alternation preserves the
-I-Regexp Boolean semantics; group depth is limited to eight. Negated classes
-and Unicode property classes remain rejected. Match consumes
+I-Regexp Boolean semantics; group depth is limited to eight. Classes have at most 32 intervals and translated class patterns have a bounded length. Unicode property classes remain rejected. Match consumes
 the entire string; search looks for a substring. Missing and non-string values
 do not match. The nonbacktracking engine has a 25 ms timeout and candidate
 visits are reserved from the shared 64-evaluation budget before evaluation.
