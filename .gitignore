@@ -1,0 +1,28 @@
+# .NET build outputs
+[Bb]in/
+[Oo]bj/
+artifacts/
+[Tt]est[Rr]esults/
+
+# Local IDE and user-specific settings
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Local environment files (keep shareable templates versioned)
+.env
+.env.local
+.env.*.local
+
+# Local test and coverage output
+coverage/
+*.trx
+*.coverage
+*.coveragexml
+
+# OS metadata
+.DS_Store
+Thumbs.db
