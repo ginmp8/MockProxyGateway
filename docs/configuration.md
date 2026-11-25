@@ -117,8 +117,8 @@ outer filters are supported, including within selector unions, for example
 `$.items[?@.active == true].value`, `$.items[0,?@.active == true]` or
 `$.items[?@.active,?@.override]`. The existing union-product limit also applies
 to mixed filter unions. Each filter expression is checked independently and
-duplicate selections are preserved by the library. Nested-filter expressions
-remain excluded from unions.
+duplicate selections are preserved by the library. Nested relative filters may appear in outer unions or alongside a second outer
+filter. The same outer union-product cap and quadratic precharge apply.
 Filters accept relative and root paths, scalar literals, the six comparison
 operators, existence (including wildcard and slice paths), AND/OR/NOT and up to eight
 nested logical levels. `count(@.items[*])`, `value(@.items[0:1])` and
@@ -136,8 +136,8 @@ Two predicate descents incur the cubic precharge; two outer and two predicate
 descents cannot be combined. One nested relative filter inside the outer
 predicate is admitted (e.g. `$.items[?@.nested[?@.active == true]]`), including
 `count()` and `value()` over the nested results. Expressions containing a nested
-filter cannot contain another outer filter, root references inside predicates,
-unions or recursive descent;
+filter cannot contain root references inside predicates, predicate unions or
+recursive descent;
 additional nested levels, other functions and a third descent inside any query
 remain rejected. The locked JsonPath.Net version is 2.2.0 (MIT). `length()` is not admitted
 until RFC-correct Unicode scalar counting and bounded evaluation are verified

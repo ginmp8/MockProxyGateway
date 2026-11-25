@@ -229,12 +229,13 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 hasCubicTraversal = recursiveCount == 2 || hasRepeatedPredicateDescent;
                 // Descent may make filter candidate subtrees overlap. Charge worst-case
                 // repeated traversal even for a relative predicate in that case.
-                // Nested filters currently admit only relative, non-recursive
-                // queries without unions. Do not rely on the pinned library's
-                // root scoping inside nested expressions. Precharge a whole-input
-                // traversal per candidate even for this non-overlapping subset.
-                if (hasNestedFilter && (filterCount != 1 || predicateRepeatedTraversal || recursive || pathMultiplier != 1 || predicateUnionProduct != 1))
-                    throw Invalid("Nested JSONPath filters require relative non-recursive queries without unions.");
+                // Nested predicates remain relative and non-recursive, with no
+                // predicate unions. Outer unions can duplicate candidates by at
+                // most pathMultiplier; the existing quadratic precharge includes
+                // that factor and the full expression length, even across two
+                // outer filters. Never rely on nested root scoping.
+                if (hasNestedFilter && (predicateRepeatedTraversal || recursive || predicateUnionProduct != 1))
+                    throw Invalid("Nested JSONPath filters require relative non-recursive predicates without predicate unions.");
                 hasRepeatedTraversal = predicateRepeatedTraversal || recursive || hasNestedFilter;
                 if (predicateUnionProduct > 4 / pathMultiplier)
                     throw Invalid("JSONPath predicate union complexity limit exceeded.");

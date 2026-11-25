@@ -598,6 +598,8 @@ public sealed class ForwardingTests
     [InlineData("$.items[?count($..nested..score) == 2]")]
     [InlineData("$.items[0,?@.score >= 10]")]
     [InlineData("$.items[?@.score >= 10,?@.value == 42]")]
+    [InlineData("$.items[0,?@.nested[?@.active]]")]
+    [InlineData("$.items[?@.nested[?@.active]][?@.value]")]
     public async Task RepeatedPathWorkIsRejectedBeforeAnyOutboundCall(string selector)
     {
         await using var upstream = await Upstream.StartAsync();
