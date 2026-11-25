@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.WebUtilities;
+using MockProxyGateway.Matching;
 using Microsoft.Extensions.Options;
 using MockProxyGateway.Configuration;
 using Yarp.ReverseProxy.Forwarder;
@@ -84,12 +86,23 @@ internal sealed class ProxyTransport : IDisposable
             }
             foreach (var name in destination.RemoveHeaders)
                 proxyRequest.Content?.Headers.Remove(name);
-            var query = httpContext.Request.QueryString;
-            if (destination.RemoveQuery.Length > 0)
-                query = QueryString.Create(httpContext.Request.Query
-                    .Where(x => !destination.RemoveQuery.Contains(x.Key, StringComparer.OrdinalIgnoreCase))
-                    .SelectMany(x => x.Value.Select(v => new KeyValuePair<string, string?>(x.Key, v))));
-            proxyRequest.RequestUri = RequestUtilities.MakeDestinationAddress(destinationPrefix, new PathString(path), query);
+            var query = httpContext.Request.QueryString.Value ?? "";
+            if (destination.RemoveQuery.Length > 0 && query.Length > 1)
+            {
+                var fields = query[1..].Split('&');
+                var retained = fields.Where(field => !QueryHelpers.ParseQuery("?" + field).Keys
+                    .Any(key => destination.RemoveQuery.Contains(key, StringComparer.OrdinalIgnoreCase)));
+                var filtered = string.Join('&', retained);
+                query = filtered.Length == 0 ? "" : "?" + filtered;
+            }
+            if (!GatewayPaths.IsSafe(path) || !GatewayPaths.IsEscapedTargetPart(path, query: false) ||
+                !GatewayPaths.IsEscapedTargetPart(query, query: true))
+                throw new RequestFailure(400);
+            // The authority and base path are exclusively from the validated destination, never the request.
+            var target = destination.BaseUri.GetLeftPart(UriPartial.Authority) +
+                destination.BaseUri.AbsolutePath.TrimEnd('/') + path + query;
+            proxyRequest.RequestUri = new Uri(target,
+                new UriCreationOptions { DangerousDisablePathAndQueryCanonicalization = true });
         }
     }
 }

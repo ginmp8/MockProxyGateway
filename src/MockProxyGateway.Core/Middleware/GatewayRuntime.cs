@@ -35,8 +35,17 @@ internal sealed partial class GatewayRuntime : IDisposable
 
     internal async Task InvokeAsync(HttpContext context, RequestDelegate next, PathString prefix)
     {
+        var raw = context.Features.Get<IHttpRequestFeature>()?.RawTarget;
+        var rawPath = raw?.Split('?', 2)[0];
         if (!context.Request.Path.StartsWithSegments(prefix, StringComparison.Ordinal, out var remaining))
         {
+            // Reject an unsafe original gateway target even if the host normalized it outside the branch.
+            var rawPrefix = context.Request.PathBase.ToUriComponent() + prefix.ToUriComponent();
+            if (rawPath is not null && GatewayPaths.StartsWithSegment(rawPath, rawPrefix) && !GatewayPaths.IsSafe(rawPath))
+            {
+                context.Response.StatusCode = 400;
+                return;
+            }
             await next(context).ConfigureAwait(false);
             return;
         }
@@ -45,9 +54,8 @@ internal sealed partial class GatewayRuntime : IDisposable
             context.Response.StatusCode = 404;
             return;
         }
-        var raw = context.Features.Get<IHttpRequestFeature>()?.RawTarget;
-        var rawPath = raw?.Split('?', 2)[0];
-        if (!GatewayPaths.IsSafe(remaining.Value) || (!string.IsNullOrEmpty(rawPath) && !GatewayPaths.IsSafe(rawPath)))
+        if (!GatewayPaths.IsSafe(remaining.Value) || (!string.IsNullOrEmpty(rawPath) &&
+            (!GatewayPaths.IsSafe(rawPath) || !GatewayPaths.IsEscapedTargetPart(rawPath, query: false))))
         {
             context.Response.StatusCode = 400;
             return;
@@ -95,8 +103,14 @@ internal sealed partial class GatewayRuntime : IDisposable
             if (action == "mock")
                 await MockAsync(context, selected.Action.Response!).ConfigureAwait(false);
             else
+            {
+                var escapedPrefix = context.Request.PathBase.ToUriComponent() + prefix.ToUriComponent() + "/" + alias;
+                var escapedPath = selected.Action.PathRewrite is { } rewrite
+                    ? new PathString(Uri.UnescapeDataString(rewrite)).ToUriComponent()
+                    : GatewayPaths.GetForwardPath(rawPath, escapedPrefix, path);
                 await _transport.ForwardAsync(context, context.RequestServices.GetRequiredService<IHttpForwarder>(),
-                    snapshot.Destinations[selected.Action.Destination!], selected.Action.PathRewrite ?? path).ConfigureAwait(false);
+                    snapshot.Destinations[selected.Action.Destination!], escapedPath).ConfigureAwait(false);
+            }
         }
         catch (RequestFailure failure)
         {

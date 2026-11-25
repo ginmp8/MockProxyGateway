@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Http;
+using MockProxyGateway.Matching;
 
 namespace MockProxyGateway.Configuration;
 
@@ -17,6 +19,41 @@ internal static partial class GatewayPaths
                 return false;
         }
         return true;
+    }
+
+    internal static bool StartsWithSegment(string value, string prefix) =>
+        value.Equals(prefix, StringComparison.Ordinal) || value.StartsWith(prefix + "/", StringComparison.Ordinal);
+
+    internal static bool IsEscapedTargetPart(string value, bool query)
+    {
+        // Validate URI wire syntax before bypassing URI path/query normalization.
+        // Percent escapes are preserved, but must be well formed.
+        for (var i = 0; i < value.Length; i++)
+        {
+            var c = value[i];
+            if (c == '%')
+            {
+                if (i + 2 >= value.Length || !Uri.IsHexDigit(value[i + 1]) || !Uri.IsHexDigit(value[i + 2]))
+                    return false;
+                i += 2;
+            }
+            else if (!(char.IsAsciiLetterOrDigit(c) || "-._~!    [GeneratedRegex("^[A-Za-z0-9]'()*+,;=:@/".Contains(c) || (query && c == '?')))
+                return false;
+        }
+        return true;
+    }
+
+    internal static string GetForwardPath(string? rawPath, string prefix, string decodedPath)
+    {
+        if (string.IsNullOrEmpty(rawPath))
+            return new PathString(decodedPath).ToUriComponent();
+        if (!StartsWithSegment(rawPath, prefix))
+            throw new RequestFailure(400);
+        var remainder = rawPath.Length == prefix.Length ? "/" : rawPath[prefix.Length..];
+        if (!IsSafe(remainder) || !IsEscapedTargetPart(remainder, query: false) ||
+            !string.Equals(PathString.FromUriComponent(remainder).Value, decodedPath, StringComparison.Ordinal))
+            throw new RequestFailure(400);
+        return remainder;
     }
 
     [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$", RegexOptions.CultureInvariant)]

@@ -137,6 +137,33 @@ public sealed class ForwardingTests
         Assert.Equal(count + 1, upstream.Requests.Count);
     }
 
+    [Fact]
+    public async Task RawPathAndRemainingQueryEncodingReachRealUpstreamUnchanged()
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var json = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/","removeQuery":["simulate"]}},
+            "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
+            """)!;
+        json["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl + "real/";
+        await using var gateway = await StartGatewayAsync(json, upstream, realServer: true);
+        using var client = new HttpClient(new SocketsHttpHandler { UseProxy = false, AllowAutoRedirect = false });
+        var ct = TestContext.Current.CancellationToken;
+        var uri = new Uri(gateway.Urls.Single().TrimEnd('/') +
+            "/mock-proxy/a/%7e/%41%20b?x=a%2fb&x=%41+%20&simulate=ignore&y=1",
+            new UriCreationOptions { DangerousDisablePathAndQueryCanonicalization = true });
+        using var response = await client.GetAsync(uri, ct);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal("/real/%7e/%41%20b?x=a%2fb&x=%41+%20&y=1", upstream.Requests.Last().Target);
+
+        var count = upstream.Requests.Count;
+        var unsafeUri = new Uri(gateway.Urls.Single().TrimEnd('/') + "/mock-proxy/a/%2e%2e/escape",
+            new UriCreationOptions { DangerousDisablePathAndQueryCanonicalization = true });
+        using var blocked = await client.GetAsync(unsafeUri, ct);
+        Assert.Equal(HttpStatusCode.BadRequest, blocked.StatusCode);
+        Assert.Equal(count, upstream.Requests.Count);
+    }
+
     private static HttpRequestMessage CreateRequest(string method, string url, string? body, string? scenario = null)
     {
         var request = new HttpRequestMessage(new HttpMethod(method), url);
@@ -147,10 +174,13 @@ public sealed class ForwardingTests
         return request;
     }
 
-    private static async Task<WebApplication> StartGatewayAsync(JsonNode json, Upstream upstream)
+    private static async Task<WebApplication> StartGatewayAsync(JsonNode json, Upstream upstream, bool realServer = false)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
-        builder.WebHost.UseTestServer();
+        if (realServer)
+            builder.WebHost.UseKestrel().UseUrls("http://127.0.0.1:0");
+        else
+            builder.WebHost.UseTestServer();
         builder.Services.AddMockProxyGateway(options =>
         {
             options.ProgrammaticRules = () => System.Text.Json.JsonSerializer.SerializeToElement(json);
