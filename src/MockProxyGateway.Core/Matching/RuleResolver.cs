@@ -128,13 +128,14 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                 if (_bodySelections.TryGetValue(condition.Key!, out var cached))
                     return cached;
                 Charge(_bodyNodes * (long)condition.JsonPathWorkMultiplier);
+                // Repeated descent, root queries and filters can revisit
+                // overlapping subtrees. Bound the worst case before evaluation:
+                // every candidate traverses the entire input.
+                if (condition.HasJsonPathRepeatedTraversal)
+                    Charge((long)_bodyNodes * (_bodyNodes + _bodyByteLength / 64L + 1) * condition.JsonPathWorkMultiplier);
                 if (condition.HasJsonPathFilter)
                 {
                     Charge((_bodyByteLength / 64L + 1) * condition.JsonPathWorkMultiplier);
-                    // Root queries and descent with filters can revisit overlapping subtrees.
-                    // Bound the worst case: every candidate traverses the entire input.
-                    if (condition.HasJsonPathRepeatedTraversal)
-                        Charge((long)_bodyNodes * (_bodyNodes + _bodyByteLength / 64L + 1) * condition.JsonPathWorkMultiplier);
                     if (!_filterNumbersValidated)
                     {
                         ValidateFilterNumbers(_body);

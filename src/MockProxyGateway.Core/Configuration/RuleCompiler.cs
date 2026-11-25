@@ -187,32 +187,39 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 throw Invalid("Invalid or overly complex JSONPath.");
             if (jsonPath.Segments.Length > 16)
                 throw Invalid("JSONPath segment limit exceeded.");
-            var recursive = false;
+            var recursiveCount = 0;
+            var filterCount = 0;
             var recursiveSuffix = 0;
             foreach (var segment in jsonPath.Segments)
             {
                 // Before the first descent all candidate nodes are at the same depth.
                 // Their subtrees are disjoint except for duplicates introduced by unions.
-                // Repeated descent could revisit overlapping subtrees; reject it.
-                if ((segment.IsRecursive && recursive) || segment.Selectors.Length == 0 ||
+                // Two descents may revisit overlapping subtrees. Charge the
+                // whole-input traversal per candidate before evaluating them.
+                if ((segment.IsRecursive && ++recursiveCount > 2) || segment.Selectors.Length == 0 ||
                     segment.Selectors.Any(x => x is not (NameSelector or IndexSelector or WildcardSelector or SliceSelector or FilterSelector)))
                     throw Invalid("Unsupported or overly complex JSONPath selector.");
                 var filters = segment.Selectors.Count(x => x is FilterSelector);
                 if (filters != 0)
                 {
-                    if (hasFilter || filters != 1 || segment.Selectors.Length != 1)
-                        throw Invalid("Only one non-union JSONPath filter is supported.");
+                    if (++filterCount > 2 || filters != 1 || segment.Selectors.Length != 1)
+                        throw Invalid("At most two non-union JSONPath filters are supported.");
                     hasFilter = true;
                 }
-                if (recursive)
+                if (recursiveCount > (segment.IsRecursive ? 1 : 0))
                     recursiveSuffix++;
-                recursive |= segment.IsRecursive;
                 if (segment.Selectors.Length > 4 / pathMultiplier)
                     throw Invalid("JSONPath union complexity limit exceeded.");
                 pathMultiplier *= segment.Selectors.Length;
             }
+            var recursive = recursiveCount != 0;
+            hasRepeatedTraversal = recursiveCount == 2;
             if (hasFilter)
             {
+                // Multiple descents combined with a filter need a separate
+                // higher-order traversal bound; do not admit that combination.
+                if (recursiveCount == 2)
+                    throw Invalid("Repeated JSONPath descent cannot be combined with filters.");
                 var normalized = BoundedJsonPathFilter.Normalize(key, out var predicateRepeatedTraversal, out var predicateUnionProduct, out var hasNestedFilter);
                 // Descent may make filter candidate subtrees overlap. Charge worst-case
                 // repeated traversal even for a relative predicate in that case.
@@ -220,7 +227,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 // queries without unions. Do not rely on the pinned library's
                 // root scoping inside nested expressions. Precharge a whole-input
                 // traversal per candidate even for this non-overlapping subset.
-                if (hasNestedFilter && (predicateRepeatedTraversal || recursive || pathMultiplier != 1 || predicateUnionProduct != 1))
+                if (hasNestedFilter && (filterCount != 1 || predicateRepeatedTraversal || recursive || pathMultiplier != 1 || predicateUnionProduct != 1))
                     throw Invalid("Nested JSONPath filters require relative non-recursive queries without unions.");
                 hasRepeatedTraversal = predicateRepeatedTraversal || recursive || hasNestedFilter;
                 if (predicateUnionProduct > 4 / pathMultiplier)

@@ -14,6 +14,7 @@ internal static class BoundedJsonPathFilter
         maxUnionProduct = 1;
         hasNestedFilter = false;
         const int filterDepth = 0;
+        var foundFilter = false;
         var index = 0;
         var grouping = new List<(int Offset, char Character)>();
         while (index < path.Length)
@@ -27,15 +28,17 @@ internal static class BoundedJsonPathFilter
             {
                 ReadExpression(path, ref index, 0, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, filterDepth);
                 Require(path, ref index, "]");
-                if (grouping.Count == 0)
-                    return path;
-                var normalized = new StringBuilder(path);
-                foreach (var (offset, character) in grouping.OrderByDescending(x => x.Offset))
-                    normalized.Insert(offset, character);
-                return normalized.ToString();
+                foundFilter = true;
             }
         }
-        throw Invalid();
+        if (!foundFilter)
+            throw Invalid();
+        if (grouping.Count == 0)
+            return path;
+        var normalized = new StringBuilder(path);
+        foreach (var (offset, character) in grouping.OrderByDescending(x => x.Offset))
+            normalized.Insert(offset, character);
+        return normalized.ToString();
     }
 
     private static void ReadExpression(string path, ref int index, int depth, List<(int Offset, char Character)> grouping, ref bool usesRepeatedTraversal, ref int maxUnionProduct, ref bool hasNestedFilter, int filterDepth)

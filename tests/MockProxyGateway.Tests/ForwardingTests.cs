@@ -590,6 +590,30 @@ public sealed class ForwardingTests
         Assert.Single(upstream.Requests);
     }
 
+    [Theory]
+    [InlineData("$..items..score")]
+    [InlineData("$.items[?@.score][?@.value]")]
+    public async Task RepeatedPathWorkIsRejectedBeforeAnyOutboundCall(string selector)
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"repeated-path","priority":1,"conditions":{"source":"body","key":"$.items","operator":"notExists"},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        rules["services"]!["a"]!["rules"]![0]!["conditions"]!["key"] = selector;
+        await using var gateway = await StartGatewayAsync(rules, upstream);
+        using var client = gateway.GetTestClient();
+        var payload = "{\"items\":[" + string.Join(',', Enumerable.Repeat("{\"score\":9,\"value\":42}", 3000)) + "]}";
+        using var body = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync("/mock-proxy/a/check", body, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty(upstream.Requests);
+    }
+
     [Fact]
     public async Task NestedRelativeFilterSelectsMockOrRealWithoutExtraOutboundCalls()
     {
