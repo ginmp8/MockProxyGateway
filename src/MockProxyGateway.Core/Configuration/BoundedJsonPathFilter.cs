@@ -74,8 +74,9 @@ internal static class BoundedJsonPathFilter
         return normalized.ToString();
     }
 
-    // Detect private function calls in this outer predicate, skipping quoted
-    // strings and nested selector brackets. Ordinary expressions retain the
+    // Detect private function calls anywhere in the current predicate, skipping
+    // quoted strings. Nested private calls require explicit selector replacement.
+    // Ordinary expressions retain the
     // original admission and normalization path.
     private static bool ContainsLocalFunction(string path, int index)
     {
@@ -97,13 +98,13 @@ internal static class BoundedJsonPathFilter
                     return false;
                 brackets--;
             }
-            else if (brackets == 0)
+            else
             {
                 if (current == '(')
                     parentheses++;
                 else if (current == ')')
                     parentheses--;
-                else if (current == ',' && parentheses == 0)
+                else if (current == ',' && brackets == 0 && parentheses == 0)
                     return false;
                 else
                 {
@@ -189,15 +190,34 @@ internal static class BoundedJsonPathFilter
             SkipWhitespace(path, ref _index);
             var leafStart = _index;
             var grouping = new List<(int Offset, char Character)>();
+            ISelector? nestedPrivate = null;
+            void ReadNestedPrivate(ref int cursor)
+            {
+                if (nestedPrivate is not null)
+                    throw Invalid();
+                var nestedStart = cursor;
+                var nested = new LocalExpressionParser(path, cursor, _usesRepeatedTraversal,
+                    _maxUnionProduct, _hasNestedFilter, _hasRepeatedPredicateDescent);
+                var nestedPredicate = nested.ReadOr(0);
+                cursor = nested.Position;
+                _usesRepeatedTraversal = nested.UsesRepeatedTraversal;
+                _maxUnionProduct = nested.MaxUnionProduct;
+                _hasNestedFilter = nested.HasNestedFilter;
+                _hasRepeatedPredicateDescent = nested.HasRepeatedPredicateDescent;
+                RegexCount += nested.RegexCount;
+                nestedPrivate = new BoundedCompoundFilterSelector(nestedPredicate, nested.RegexCount,
+                    path[nestedStart..cursor]);
+            }
+
             var left = ReadOperand(path, ref _index, grouping, ref _usesRepeatedTraversal,
-                ref _maxUnionProduct, ref _hasNestedFilter, ref _hasRepeatedPredicateDescent, 0);
+                ref _maxUnionProduct, ref _hasNestedFilter, ref _hasRepeatedPredicateDescent, 0, ReadNestedPrivate);
             if (Take(path, ref _index, "==") || Take(path, ref _index, "!=") ||
                 Take(path, ref _index, "<=") || Take(path, ref _index, ">=") ||
                 Take(path, ref _index, "<") || Take(path, ref _index, ">"))
             {
                 var right = ReadOperand(path, ref _index, grouping, ref _usesRepeatedTraversal,
-                    ref _maxUnionProduct, ref _hasNestedFilter, ref _hasRepeatedPredicateDescent, 0);
-                if (!left.Comparable || !right.Comparable)
+                    ref _maxUnionProduct, ref _hasNestedFilter, ref _hasRepeatedPredicateDescent, 0, ReadNestedPrivate);
+                if (nestedPrivate is not null || !left.Comparable || !right.Comparable)
                     throw Invalid();
             }
             else if (!left.Query)
@@ -208,6 +228,33 @@ internal static class BoundedJsonPathFilter
             var expression = new StringBuilder(path[leafStart.._index]);
             foreach (var (offset, character) in grouping.OrderByDescending(x => x.Offset))
                 expression.Insert(offset - leafStart, character);
+            if (nestedPrivate is not null)
+            {
+                // Only relative existence queries are admitted here. The compiler
+                // rejects root references, recursion and predicate unions whenever
+                // any nested filter is present. Evaluating on the current candidate
+                // therefore preserves nested scope without changing the host registry.
+                var queryText = expression.ToString().Trim();
+                if (queryText[0] != '@' ||
+                    !JsonPath.TryParse("$" + queryText[1..], out var query) ||
+                    query.Segments.Length > 16)
+                    throw Invalid();
+                var replaced = 0;
+                foreach (var segment in query.Segments)
+                {
+                    for (var i = 0; i < segment.Selectors.Length; i++)
+                    {
+                        if (segment.Selectors[i] is not FilterSelector)
+                            continue;
+                        segment.Selectors[i] = nestedPrivate;
+                        replaced++;
+                    }
+                }
+                if (replaced != 1)
+                    throw Invalid();
+                return (_, candidate) => query.Evaluate(candidate).Matches.Any();
+            }
+
             if (!JsonPath.TryParse("$[?" + expression.ToString().Trim() + "]", out var parsed) ||
                 parsed.Segments[0].Selectors[0] is not FilterSelector filter)
                 throw Invalid();
@@ -357,7 +404,9 @@ internal static class BoundedJsonPathFilter
 
     // A query may be tested for existence; comparisons require a singular
     // query or a value. The pinned parser still validates full RFC syntax.
-    private static (bool Query, bool Comparable) ReadOperand(string path, ref int index, List<(int Offset, char Character)> grouping, ref bool usesRepeatedTraversal, ref int maxUnionProduct, ref bool hasNestedFilter, ref bool hasRepeatedPredicateDescent, int filterDepth)
+    private delegate void NestedPrivateReader(ref int index);
+
+    private static (bool Query, bool Comparable) ReadOperand(string path, ref int index, List<(int Offset, char Character)> grouping, ref bool usesRepeatedTraversal, ref int maxUnionProduct, ref bool hasNestedFilter, ref bool hasRepeatedPredicateDescent, int filterDepth, NestedPrivateReader? nestedPrivateReader = null)
     {
         SkipWhitespace(path, ref index);
         if (index >= path.Length)
@@ -366,7 +415,7 @@ internal static class BoundedJsonPathFilter
         {
             var root = path[index++] == '$';
             usesRepeatedTraversal |= root;
-            var singular = ReadSegments(path, ref index, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, ref hasRepeatedPredicateDescent, filterDepth);
+            var singular = ReadSegments(path, ref index, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, ref hasRepeatedPredicateDescent, filterDepth, nestedPrivateReader);
             return (true, singular);
         }
         // These built-ins have bounded work on a nodelist.
@@ -379,7 +428,7 @@ internal static class BoundedJsonPathFilter
             if (index >= path.Length || path[index] is not ('@' or '$'))
                 throw Invalid();
             usesRepeatedTraversal |= path[index++] == '$';
-            ReadSegments(path, ref index, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, ref hasRepeatedPredicateDescent, filterDepth);
+            ReadSegments(path, ref index, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, ref hasRepeatedPredicateDescent, filterDepth, nestedPrivateReader);
             Require(path, ref index, ")");
             return (false, true);
         }
@@ -401,7 +450,7 @@ internal static class BoundedJsonPathFilter
         return (false, true);
     }
 
-    private static bool ReadSegments(string path, ref int index, List<(int Offset, char Character)> grouping, ref bool usesRepeatedTraversal, ref int maxUnionProduct, ref bool hasNestedFilter, ref bool hasRepeatedPredicateDescent, int filterDepth)
+    private static bool ReadSegments(string path, ref int index, List<(int Offset, char Character)> grouping, ref bool usesRepeatedTraversal, ref int maxUnionProduct, ref bool hasNestedFilter, ref bool hasRepeatedPredicateDescent, int filterDepth, NestedPrivateReader? nestedPrivateReader = null)
     {
         var singular = true;
         var unionProduct = 1;
@@ -449,8 +498,15 @@ internal static class BoundedJsonPathFilter
                     if (filterDepth != 0 || hasNestedFilter)
                         throw Invalid();
                     hasNestedFilter = true;
-                    ReadExpression(path, ref index, 0, grouping, ref usesRepeatedTraversal,
-                        ref maxUnionProduct, ref hasNestedFilter, ref hasRepeatedPredicateDescent, filterDepth + 1);
+                    if (ContainsLocalFunction(path, index))
+                    {
+                        if (nestedPrivateReader is null)
+                            throw Invalid();
+                        nestedPrivateReader(ref index);
+                    }
+                    else
+                        ReadExpression(path, ref index, 0, grouping, ref usesRepeatedTraversal,
+                            ref maxUnionProduct, ref hasNestedFilter, ref hasRepeatedPredicateDescent, filterDepth + 1);
                     Require(path, ref index, "]");
                     singular = false;
                     continue;

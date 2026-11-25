@@ -752,6 +752,46 @@ public sealed class ForwardingTests
         Assert.Same(originalSearch, currentSearch);
     }
 
+    [Theory]
+    [InlineData("$.items[?@.nested[?length(@.name) == 2]]", false, 202, 0)]
+    [InlineData("$.items[?@.nested[?length(@.name) == 1]]", false, 201, 1)]
+    [InlineData("$.items[?@.nested[?match(@.name, '..')]]", false, 202, 0)]
+    [InlineData("$.items[?@.nested[?search(@.name, 'z')]]", false, 201, 1)]
+    [InlineData("$.items[?@.nested[?match(@.name, '..')]]", true, 400, 0)]
+    [InlineData("$.items[?@.nested[?@.name || match(@.name, '..')]]", true, 400, 0)]
+    public async Task NestedPrivateFilterUsesCandidateScopeAndFailsClosed(string selector, bool large, int status, int calls)
+    {
+        Assert.True(Json.Path.FunctionRepository.TryGet("length", out var length));
+        Assert.True(Json.Path.FunctionRepository.TryGet("match", out var match));
+        Assert.True(Json.Path.FunctionRepository.TryGet("search", out var search));
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"nested-private","priority":1,"conditions":{"source":"body","key":"$.items","operator":"exists"},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        rules["services"]!["a"]!["rules"]![0]!["conditions"]!["key"] = selector;
+        await using var gateway = await StartGatewayAsync(rules, upstream);
+        using var client = gateway.GetTestClient();
+        var payload = "{\"items\":[{\"name\":\"outer\",\"nested\":[" +
+            string.Join(',', Enumerable.Repeat("{\"name\":\"e\\u0301\"}", large ? 80 : 1)) + "]}]}";
+        using var body = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync("/mock-proxy/a/check", body, TestContext.Current.CancellationToken);
+        Assert.Equal((HttpStatusCode)status, response.StatusCode);
+        Assert.Equal(calls, upstream.Requests.Count);
+        if (calls == 1)
+            Assert.Equal(payload, Assert.Single(upstream.Requests).Body);
+        Assert.True(Json.Path.FunctionRepository.TryGet("length", out var afterLength));
+        Assert.True(Json.Path.FunctionRepository.TryGet("match", out var afterMatch));
+        Assert.True(Json.Path.FunctionRepository.TryGet("search", out var afterSearch));
+        Assert.Same(length, afterLength);
+        Assert.Same(match, afterMatch);
+        Assert.Same(search, afterSearch);
+    }
+
     [Fact]
     public async Task NestedRelativeFilterSelectsMockOrRealWithoutExtraOutboundCalls()
     {

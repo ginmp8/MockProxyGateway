@@ -284,7 +284,15 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(@.name, 'x') || length(@.names[*]) == 2]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?length(@.name) == 2 && 4]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(@.name, 'x') && search(@.name, @.pattern)]\",\"operator\":\"exists\"}")]
-    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?match(@.name, 'x')]]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?match($.name, 'x')]]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?match(@.name, @.pattern)]]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?@.other[?match(@.name, 'x')]]]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@.nested[?match(@.name, 'x')]) == 1]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?match(@.name, 'x')] == 42]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?match(@.name, 'x')] && $.flag]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?match(@.name, 'x')] && @.other[?@.flag]]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$..items[?@.nested[?match(@.name, 'x')]]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?match(@.name, 'x')][0,0]]\",\"operator\":\"exists\"}")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """
@@ -574,6 +582,21 @@ public sealed class GatewayTests
     [InlineData("$.items[?length(@.name) == 1 && @.nested[?@.active == true]].value", "{\"label\":\"é\",\"items\":[{\"name\":\"😀\",\"nested\":[{\"active\":true}],\"value\":42}]}", 201)]
     [InlineData("$.items[?length(@.name) == 1 && @.nested[?@.active == true]].value", "{\"label\":\"é\",\"items\":[{\"name\":\"😀\",\"nested\":[{\"active\":false}],\"value\":42}]}", 404)]
     [InlineData("$.items[?match(@.name, 'x') && length($.label) == 2].value", "{\"label\":\"é\",\"items\":[{\"name\":\"x\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?@.nested[?length(@.name) == 2]].value", "{\"items\":[{\"nested\":[{\"name\":\"é\"}],\"value\":42}]}", 201)]
+    [InlineData("$.items[?@.nested[?length(@.name) == 1]].value", "{\"items\":[{\"nested\":[{\"name\":\"é\"}],\"value\":42}]}", 404)]
+    [InlineData("$.items[?@.nested[?match(@.name, '..')]].value", "{\"items\":[{\"nested\":[{\"name\":\"é\"}],\"value\":42}]}", 201)]
+    [InlineData("$.items[?@.nested[?search(@.name, 'z')]].value", "{\"items\":[{\"nested\":[{\"name\":\"é\"}],\"value\":42}]}", 404)]
+    [InlineData("$.items[?@.nested[?match(@.name, 'x')]].value", "{\"items\":[{\"name\":\"x\",\"nested\":[{\"name\":\"y\"}],\"value\":42}]}", 404)]
+    [InlineData("$.items[?@.nested[?match(@.name, 'x')]].value", "{\"items\":[{\"name\":\"y\",\"nested\":[{\"name\":\"x\"}],\"value\":42}]}", 201)]
+    [InlineData("$.items[?!@.nested[?match(@.name, 'x')]].value", "{\"items\":[{\"nested\":[{\"name\":\"y\"}],\"value\":42}]}", 201)]
+    [InlineData("$.items[?!@.nested[?match(@.name, 'x')]].value", "{\"items\":[{\"nested\":[{\"name\":\"x\"}],\"value\":42}]}", 404)]
+    [InlineData("$.items[?@.nested[?length(@.name) == 2 && !search(@.name, 'z')]].value", "{\"items\":[{\"nested\":[{\"name\":\"é\"}],\"value\":42}]}", 201)]
+    [InlineData("$.items[?@.nested[?length(@.name) == 2 && !search(@.name, 'z')]].value", "{\"items\":[{\"nested\":[{\"name\":\"zz\"}],\"value\":42}]}", 404)]
+    [InlineData("$.items[?@.nested[?match(@.name, 'x')] && @.active == true].value", "{\"items\":[{\"nested\":[{\"name\":\"x\"}],\"active\":false,\"value\":42}]}", 404)]
+    [InlineData("$.items[?@.nested[?match(@.name, 'x')] && @.active == true].value", "{\"items\":[{\"nested\":[{\"name\":\"x\"}],\"active\":true,\"value\":42}]}", 201)]
+    [InlineData("$.items[?@.nested[?match(@.name, 'x')].flag].value", "{\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":null}],\"value\":42}]}", 201)]
+    [InlineData("$.items[?@.nested[?match(@.name, 'x')].flag].value", "{\"items\":[{\"nested\":[{\"name\":\"x\"}],\"value\":42}]}", 404)]
+    [InlineData("$.items[?@.nested[?match(@.name, 'x')]].value", "{\"items\":[{\"nested\":[{\"name\":\"y\"}],\"value\":42},{\"nested\":[{\"name\":\"x\"}],\"value\":1}]}", 404)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """
