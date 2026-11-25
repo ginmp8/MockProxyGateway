@@ -7,7 +7,7 @@ using Microsoft.Net.Http.Headers;
 
 namespace MockProxyGateway.Configuration;
 
-internal sealed partial class RuleCompiler(GatewayOptions options, string contentRoot)
+internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
 {
     private int _nodes;
     private int _rules;
@@ -177,20 +177,39 @@ internal sealed partial class RuleCompiler(GatewayOptions options, string conten
                 (ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None), TimeSpan.FromMilliseconds(25));
         }
         JsonPath? jsonPath = null;
+        var pathMultiplier = 1;
         if (source == "body")
         {
-            // Admit RFC 9535 child selectors only. No descendant, filter, union or slice expansion.
-            if (key!.Length > 256 || !BoundedJsonPath().IsMatch(key))
-                throw Invalid("Unsupported or overly complex JSONPath.");
-            if (!JsonPath.TryParse(key, out jsonPath))
-                throw Invalid("Invalid JSONPath selector.");
+            // Parse RFC 9535 syntax with the pinned library, not a second approximate grammar.
+            if (key!.Length > 256 || !JsonPath.TryParse(key, out jsonPath))
+                throw Invalid("Invalid or overly complex JSONPath.");
+            if (jsonPath.Segments.Length > 16)
+                throw Invalid("JSONPath segment limit exceeded.");
+            var recursive = false;
+            var recursiveSuffix = 0;
+            foreach (var segment in jsonPath.Segments)
+            {
+                // Before the first descent all candidate nodes are at the same depth.
+                // Their subtrees are disjoint except for duplicates introduced by unions.
+                // Repeated descent could revisit overlapping subtrees; reject it.
+                if ((segment.IsRecursive && recursive) || segment.Selectors.Length == 0 ||
+                    segment.Selectors.Any(x => x is not (NameSelector or IndexSelector or WildcardSelector or SliceSelector)))
+                    throw Invalid("Unsupported or overly complex JSONPath selector.");
+                if (recursive)
+                    recursiveSuffix++;
+                recursive |= segment.IsRecursive;
+                if (segment.Selectors.Length > 4 / pathMultiplier)
+                    throw Invalid("JSONPath union complexity limit exceeded.");
+                pathMultiplier *= segment.Selectors.Length;
+            }
+            // Charge descent traversal and child selection, plus each following segment:
+            // after descent, candidates at different depths can revisit nodes across stages.
+            if (recursive)
+                pathMultiplier *= 2 + recursiveSuffix;
         }
         return new Condition("leaf", [], source, key, op, hasValue ? operand.Clone() : default,
-            quantifier, ignoreCase, regex, jsonPath, hasValue ? 1 + operand.GetRawText().Length / 64 : 0);
+            quantifier, ignoreCase, regex, jsonPath, hasValue ? 1 + operand.GetRawText().Length / 64 : 0, pathMultiplier);
     }
-
-    [GeneratedRegex("""^\$(?:\.[A-Za-z_][A-Za-z0-9_]*|\.\*|\[(?:\*|-?(?:0|[1-9][0-9]{0,7})|'(?:[^'\\\x00-\x1F]|\\(?:['\\/bfnrt]|u[0-9A-Fa-f]{4}))*'|"(?:[^"\\\x00-\x1F]|\\(?:["\\/bfnrt]|u[0-9A-Fa-f]{4}))*")\]){0,16}$""", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)]
-    private static partial Regex BoundedJsonPath();
 
     internal static decimal Number(JsonElement value)
     {

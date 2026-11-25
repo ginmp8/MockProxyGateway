@@ -125,7 +125,7 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                 await LoadBodyAsync().ConfigureAwait(false);
                 if (_bodySelections.TryGetValue(condition.Key!, out var cached))
                     return cached;
-                Charge(_bodyNodes);
+                Charge(_bodyNodes * condition.JsonPathWorkMultiplier);
                 var matches = condition.JsonPath!.Evaluate(_body).Matches;
                 var results = new List<JsonElement>();
                 foreach (var match in matches)

@@ -107,10 +107,15 @@ Text comparisons are ordinal unless ignoreCase is explicitly enabled for text.
 Missing values do not satisfy ordinary positive or negative comparisons. For
 multiple values, any requires one match; all requires at least one result and all
 matching; none requires at least one result and none matching. Existence checks
-are independent of quantifiers. JSONPath supports RFC 9535 bounded child selectors:
-`$.name`, `$['with.dot']`, `$["with.dot"]`, `$[0]`, `$[-1]`, `$[*]`, `$.*`.
-At most 256 characters and 16 child segments; no descendant, union, slice or filter
-selectors. Numeric range comparisons reject unsupported decimal precision rather
+are independent of quantifiers. JSONPath supports bounded RFC 9535 selectors:
+`$.name`, `$['with.dot']`, `$["with.dot"]`, `$[0]`, `$[-1]`, `$[*]`, `$.*`,
+`$[0:6:2]`, `$[0,2]` and `$..name`. At most 256 characters and 16 segments;
+the product of selector counts across segments cannot exceed four. A maximum
+of one recursive descent is allowed; filter selectors are not supported.
+The request budget is charged before evaluation for body nodes multiplied by
+the union product; when descent is present, the charge also accounts for
+descendant traversal and every subsequent segment. Numeric range comparisons
+reject unsupported decimal precision rather
 than rounding. Condition depth is at most 12; rule count 4096; condition nodes
 16384; body nodes 16384; weighted evaluation budget 65536; at most 64 regex
 evaluations per request. Body selector caching is bounded to twice the inspected

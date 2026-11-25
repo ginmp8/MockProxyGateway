@@ -219,7 +219,10 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.value\",\"operator\":\"between\",\"value\":[1]}")]
     [InlineData("{\"source\":\"header\",\"key\":\"x\",\"operator\":\"greaterThan\",\"value\":2}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.value\",\"operator\":\"in\",\"value\":[]}")]
-    [InlineData("{\"source\":\"body\",\"key\":\"$..value\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$..items..value\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.value == 1]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$[0,1,2][0,1]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"header\",\"key\":\"x\",\"operator\":\"regex\",\"value\":\"(\"}")]
     [InlineData("{\"all\":[]}")]
     public async Task InvalidConditionFailsActivation(string condition)
@@ -263,10 +266,18 @@ public sealed class GatewayTests
     }
 
     [Theory]
-    [InlineData("$['with.dot']", "{\"with.dot\":42}")]
-    [InlineData("$.items[-1]", "{\"items\":[0,42]}")]
-    [InlineData("$.items.*", "{\"items\":{\"one\":42}}")]
-    public async Task RfcChildSelectorsSupportQuotedNamesNegativeIndexAndObjectWildcard(string selector, string payload)
+    [InlineData("$['with.dot']", "{\"with.dot\":42}", 201)]
+    [InlineData("$.items[-1]", "{\"items\":[0,42]}", 201)]
+    [InlineData("$.items.*", "{\"items\":{\"one\":42}}", 201)]
+    [InlineData("$.items[0:4:2]", "{\"items\":[0,1,42,3]}", 201)]
+    [InlineData("$.items[0:4:2]", "{\"items\":[0,42,2,3]}", 404)]
+    [InlineData("$.items[1,3]", "{\"items\":[0,1,2,42]}", 201)]
+    [InlineData("$.items[1,3]", "{\"items\":[42,1,2,3]}", 404)]
+    [InlineData("$[ 'with.dot' ]", "{\"with.dot\":42}", 201)]
+    [InlineData("$.items[::-1]", "{\"items\":[0,42]}", 201)]
+    [InlineData("$..value", "{\"nested\":{\"items\":[{\"value\":42}]}}", 201)]
+    [InlineData("$..value", "{\"nested\":{\"items\":[{\"other\":42}]}}", 404)]
+    public async Task RfcSelectorsSupportNamesIndicesWildcardsSlicesUnionsAndSingleDescent(string selector, string payload, int expected)
     {
         var rules = """
             {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
@@ -277,7 +288,23 @@ public sealed class GatewayTests
         await using var fixture = await Fixture.StartAsync(rules);
         using var content = new StringContent(payload, Encoding.UTF8, "application/json");
         using var response = await fixture.Client.PostAsync("/mock-proxy/test/check", content, TestContext.Current.CancellationToken);
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal((HttpStatusCode)expected, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task JsonPathUnionWorkIsChargedBeforeAnyAction()
+    {
+        const string rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
+              {"id":"union","priority":1,"conditions":{"source":"body","key":"$[0,0,0,0]","operator":"equals","value":0},
+               "action":{"mode":"mock","response":{"statusCode":201}}}
+            ],"default":{"mode":"mock","response":{"statusCode":404}}}}}
+            """;
+        await using var fixture = await Fixture.StartAsync(rules);
+        var json = "[" + string.Join(',', Enumerable.Repeat("0", 16383)) + "]";
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+        using var response = await fixture.Client.PostAsync("/mock-proxy/test/check", content, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Theory]
