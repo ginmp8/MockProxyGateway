@@ -1,0 +1,537 @@
+{
+  "schemaVersion": 1,
+  "destinations": {
+    "compliance-real": {
+      "baseUrl": "https://compliance.example.test/"
+    },
+    "compliance-v2": {
+      "baseUrl": "https://compliance-v2.example.test/"
+    },
+    "documents-real": {
+      "baseUrl": "https://documents.example.test/"
+    }
+  },
+  "services": {
+    "compliance": {
+      "enabled": true,
+      "default": {
+        "mode": "proxy",
+        "destination": "compliance-real"
+      },
+      "rules": [
+        {
+          "id": "compliance-maintenance",
+          "enabled": false,
+          "priority": 10,
+          "conditions": {
+            "all": [
+              {
+                "source": "header",
+                "key": "X-Test-Scenario",
+                "operator": "equals",
+                "value": "service-unavailable"
+              }
+            ]
+          },
+          "action": {
+            "mode": "mock",
+            "response": {
+              "statusCode": 503,
+              "delayMs": 0,
+              "headers": {
+                "Content-Type": "application/json"
+              },
+              "body": {
+                "error": "Service unavailable"
+              }
+            }
+          }
+        }
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/analysis",
+          "rules": [
+            {
+              "id": "explicit-real-proxy",
+              "enabled": true,
+              "priority": 1000,
+              "conditions": {
+                "all": [
+                  {
+                    "source": "header",
+                    "key": "X-Test-Scenario",
+                    "operator": "equals",
+                    "value": "real"
+                  }
+                ]
+              },
+              "action": {
+                "mode": "proxy",
+                "destination": "compliance-real"
+              }
+            },
+            {
+              "id": "unavailable-by-query",
+              "enabled": true,
+              "priority": 900,
+              "conditions": {
+                "all": [
+                  {
+                    "source": "query",
+                    "key": "simulate",
+                    "operator": "equals",
+                    "value": "unavailable"
+                  }
+                ]
+              },
+              "action": {
+                "mode": "mock",
+                "response": {
+                  "statusCode": 503,
+                  "delayMs": 0,
+                  "headers": {
+                    "Content-Type": "application/json"
+                  },
+                  "body": {
+                    "error": "Service unavailable"
+                  }
+                }
+              }
+            },
+            {
+              "id": "timeout-by-header",
+              "enabled": true,
+              "priority": 800,
+              "conditions": {
+                "all": [
+                  {
+                    "source": "header",
+                    "key": "X-Test-Scenario",
+                    "operator": "equals",
+                    "value": "timeout"
+                  }
+                ]
+              },
+              "action": {
+                "mode": "mock",
+                "response": {
+                  "statusCode": 200,
+                  "delayMs": 60000,
+                  "headers": {
+                    "Content-Type": "application/json"
+                  },
+                  "body": {
+                    "status": "Approved"
+                  }
+                }
+              }
+            },
+            {
+              "id": "rate-limited",
+              "enabled": true,
+              "priority": 750,
+              "conditions": {
+                "all": [
+                  {
+                    "source": "header",
+                    "key": "X-Test-Scenario",
+                    "operator": "equals",
+                    "value": "rate-limited"
+                  }
+                ]
+              },
+              "action": {
+                "mode": "mock",
+                "response": {
+                  "statusCode": 429,
+                  "headers": {
+                    "Content-Type": "application/json",
+                    "Retry-After": "30"
+                  },
+                  "body": {
+                    "error": "Too many requests"
+                  }
+                }
+              }
+            },
+            {
+              "id": "unauthorized-response",
+              "enabled": true,
+              "priority": 740,
+              "conditions": {
+                "all": [
+                  {
+                    "source": "header",
+                    "key": "X-Test-Scenario",
+                    "operator": "equals",
+                    "value": "unauthorized"
+                  }
+                ]
+              },
+              "action": {
+                "mode": "mock",
+                "response": {
+                  "statusCode": 401,
+                  "delayMs": 0,
+                  "headers": {
+                    "Content-Type": "application/json"
+                  },
+                  "body": {
+                    "error": "Unauthorized"
+                  }
+                }
+              }
+            },
+            {
+              "id": "pending-by-body",
+              "enabled": true,
+              "priority": 700,
+              "conditions": {
+                "all": [
+                  {
+                    "source": "body",
+                    "key": "$.customer.document",
+                    "operator": "equals",
+                    "value": "TEST-1001"
+                  }
+                ]
+              },
+              "action": {
+                "mode": "mock",
+                "response": {
+                  "statusCode": 202,
+                  "delayMs": 0,
+                  "headers": {
+                    "Content-Type": "application/json"
+                  },
+                  "body": {
+                    "status": "Pending",
+                    "analysisId": "analysis-test-1001"
+                  }
+                }
+              }
+            },
+            {
+              "id": "rejected-by-body",
+              "enabled": true,
+              "priority": 600,
+              "conditions": {
+                "all": [
+                  {
+                    "source": "body",
+                    "key": "$.customer.riskScore",
+                    "operator": "greaterThanOrEqual",
+                    "value": 80
+                  }
+                ]
+              },
+              "action": {
+                "mode": "mock",
+                "response": {
+                  "statusCode": 422,
+                  "delayMs": 0,
+                  "headers": {
+                    "Content-Type": "application/json"
+                  },
+                  "body": {
+                    "status": "Rejected",
+                    "reason": "Risk threshold"
+                  }
+                }
+              }
+            },
+            {
+              "id": "alternate-proxy",
+              "enabled": true,
+              "priority": 500,
+              "conditions": {
+                "all": [
+                  {
+                    "source": "header",
+                    "key": "X-Test-Scenario",
+                    "operator": "equals",
+                    "value": "alternate"
+                  }
+                ]
+              },
+              "action": {
+                "mode": "proxy",
+                "destination": "compliance-v2",
+                "pathRewrite": "/v2/analysis"
+              }
+            },
+            {
+              "id": "success-by-header",
+              "enabled": true,
+              "priority": 400,
+              "conditions": {
+                "all": [
+                  {
+                    "source": "header",
+                    "key": "X-Test-Scenario",
+                    "operator": "equals",
+                    "value": "success"
+                  }
+                ]
+              },
+              "action": {
+                "mode": "mock",
+                "response": {
+                  "statusCode": 200,
+                  "delayMs": 0,
+                  "headers": {
+                    "Content-Type": "application/json"
+                  },
+                  "body": {
+                    "status": "Approved",
+                    "riskLevel": "Low"
+                  }
+                }
+              }
+            },
+            {
+              "id": "success-composite",
+              "enabled": true,
+              "priority": 300,
+              "conditions": {
+                "all": [
+                  {
+                    "source": "header",
+                    "key": "X-Test-Session",
+                    "operator": "equals",
+                    "value": "session-a"
+                  },
+                  {
+                    "any": [
+                      {
+                        "source": "query",
+                        "key": "simulate",
+                        "operator": "equals",
+                        "value": "success"
+                      },
+                      {
+                        "source": "body",
+                        "key": "$.customer.type",
+                        "operator": "equals",
+                        "value": "Organization"
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "source": "header",
+                      "key": "X-Disable-Scenario",
+                      "operator": "equals",
+                      "value": "true"
+                    }
+                  }
+                ]
+              },
+              "action": {
+                "mode": "mock",
+                "response": {
+                  "statusCode": 200,
+                  "delayMs": 0,
+                  "headers": {
+                    "Content-Type": "application/json"
+                  },
+                  "body": {
+                    "status": "Approved",
+                    "scenario": "composite"
+                  }
+                }
+              }
+            },
+            {
+              "id": "array-match",
+              "enabled": true,
+              "priority": 200,
+              "conditions": {
+                "all": [
+                  {
+                    "source": "body",
+                    "key": "$.products[*].type",
+                    "operator": "equals",
+                    "value": "TestProduct",
+                    "quantifier": "any"
+                  }
+                ]
+              },
+              "action": {
+                "mode": "mock",
+                "response": {
+                  "statusCode": 200,
+                  "delayMs": 0,
+                  "headers": {
+                    "Content-Type": "application/json"
+                  },
+                  "body": {
+                    "status": "Approved",
+                    "scenario": "array"
+                  }
+                }
+              }
+            },
+            {
+              "id": "cookie-match",
+              "enabled": true,
+              "priority": 100,
+              "conditions": {
+                "all": [
+                  {
+                    "source": "cookie",
+                    "key": "test-session",
+                    "operator": "equals",
+                    "value": "session-b"
+                  }
+                ]
+              },
+              "action": {
+                "mode": "mock",
+                "response": {
+                  "statusCode": 200,
+                  "delayMs": 0,
+                  "headers": {
+                    "Content-Type": "application/json"
+                  },
+                  "body": {
+                    "status": "Approved",
+                    "scenario": "cookie"
+                  }
+                }
+              }
+            },
+            {
+              "id": "disabled-mock",
+              "enabled": false,
+              "priority": 50,
+              "conditions": {
+                "all": [
+                  {
+                    "source": "header",
+                    "key": "X-Test-Scenario",
+                    "operator": "equals",
+                    "value": "disabled"
+                  }
+                ]
+              },
+              "action": {
+                "mode": "mock",
+                "response": {
+                  "statusCode": 500,
+                  "delayMs": 0,
+                  "headers": {
+                    "Content-Type": "application/json"
+                  },
+                  "body": {
+                    "error": "Disabled rule must not execute"
+                  }
+                }
+              }
+            },
+            {
+              "id": "expired-mock",
+              "enabled": true,
+              "priority": 40,
+              "conditions": {
+                "all": [
+                  {
+                    "source": "header",
+                    "key": "X-Test-Scenario",
+                    "operator": "equals",
+                    "value": "expired"
+                  }
+                ]
+              },
+              "action": {
+                "mode": "mock",
+                "response": {
+                  "statusCode": 500,
+                  "delayMs": 0,
+                  "headers": {
+                    "Content-Type": "application/json"
+                  },
+                  "body": {
+                    "error": "Expired rule must not execute"
+                  }
+                }
+              },
+              "expiresAt": "2020-01-01T00:00:00Z"
+            }
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/analysis/{id}",
+          "rules": [
+            {
+              "id": "pending-route-parameter",
+              "enabled": true,
+              "priority": 100,
+              "conditions": {
+                "all": [
+                  {
+                    "source": "route",
+                    "key": "id",
+                    "operator": "equals",
+                    "value": "analysis-test-1001"
+                  }
+                ]
+              },
+              "action": {
+                "mode": "mock",
+                "response": {
+                  "statusCode": 200,
+                  "delayMs": 0,
+                  "headers": {
+                    "Content-Type": "application/json"
+                  },
+                  "body": {
+                    "status": "Pending"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/health",
+          "default": {
+            "mode": "mock",
+            "response": {
+              "statusCode": 200,
+              "delayMs": 0,
+              "headers": {
+                "Content-Type": "application/json"
+              },
+              "body": {
+                "status": "Healthy"
+              }
+            }
+          },
+          "rules": []
+        },
+        {
+          "method": "*",
+          "path": "/legacy/{**rest}",
+          "default": {
+            "mode": "proxy",
+            "destination": "compliance-v2"
+          },
+          "rules": []
+        }
+      ]
+    },
+    "documents": {
+      "enabled": true,
+      "default": {
+        "mode": "proxy",
+        "destination": "documents-real"
+      },
+      "endpoints": []
+    }
+  }
+}
