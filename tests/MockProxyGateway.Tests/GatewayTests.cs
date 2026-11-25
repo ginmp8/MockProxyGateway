@@ -395,6 +395,14 @@ public sealed class GatewayTests
     [InlineData("query", "Flag", "all", "lower", 201)]
     [InlineData("cookie", "Flag", "any", "lower", 404)]
     [InlineData("cookie", "flag", "any", "lower", 201)]
+    [InlineData("cookie", "Flag", "any", "case-distinct", 201)]
+    [InlineData("cookie", "flag", "any", "case-distinct", 404)]
+    [InlineData("cookie", "Flag", "any", "case-distinct-reversed", 201)]
+    [InlineData("cookie", "flag", "any", "case-distinct-reversed", 404)]
+    [InlineData("cookie", "flag", "any", "cookie-repeated", 201)]
+    [InlineData("cookie", "flag", "all", "cookie-repeated", 404)]
+    [InlineData("cookie", "flag", "none", "cookie-repeated", 404)]
+    [InlineData("cookie", "flag", "any", "cookie-encoded", 201)]
     public async Task SourceNameCasingAndRepeatedValueQuantifiers(string source, string key, string quantifier, string input, int expected)
     {
         var rules = """
@@ -406,7 +414,14 @@ public sealed class GatewayTests
         await using var fixture = await Fixture.StartAsync(rules);
         using var request = new HttpRequestMessage(HttpMethod.Get, "/mock-proxy/test/check?flag=yes&FLAG=yes");
         request.Headers.TryAddWithoutValidation("x-flag", input == "mixed" ? MixedFlags : EqualFlags);
-        request.Headers.TryAddWithoutValidation("Cookie", "flag=yes");
+        request.Headers.TryAddWithoutValidation("Cookie", input switch
+        {
+            "case-distinct" => "flag=no; Flag=yes",
+            "case-distinct-reversed" => "Flag=yes; flag=no",
+            "cookie-repeated" => "flag=yes; flag=no",
+            "cookie-encoded" => "flag=%79es",
+            _ => "flag=yes"
+        });
         using var response = await fixture.Client.SendAsync(request, TestContext.Current.CancellationToken);
         Assert.Equal((HttpStatusCode)expected, response.StatusCode);
     }

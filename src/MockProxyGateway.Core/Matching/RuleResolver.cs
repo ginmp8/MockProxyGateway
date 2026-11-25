@@ -148,8 +148,11 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                     .SelectMany(x => x.Value).Select(x => x ?? "").ToArray();
                 break;
             case "cookie":
-                strings = request.Cookies.Where(x => string.Equals(x.Key, condition.Key, StringComparison.Ordinal))
-                    .Select(x => x.Value).ToArray();
+                // IRequestCookieCollection collapses names using OrdinalIgnoreCase.
+                // Parse the wire header without modifying it or losing repeated/case-distinct names.
+                strings = CookieHeaderValue.ParseList(request.Headers.Cookie.Select(x => x ?? "").ToArray())
+                    .Where(x => string.Equals(x.Name.Value, condition.Key, StringComparison.Ordinal))
+                    .Select(x => Uri.UnescapeDataString(x.Value.Value ?? "")).ToArray();
                 break;
             case "route":
                 strings = route.TryGetValue(condition.Key!, out var captured) ? [captured] : [];

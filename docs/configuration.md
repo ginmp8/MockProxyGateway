@@ -79,7 +79,10 @@ identifiers, resource limits, destination permissions, and fixture paths.
 | Mock action | mode=mock, response: statusCode, headers, delayMs, at most one of body (JSON), text, bodyFile |
 
 Header names and query keys compare case-insensitively; cookie, route and JSON property
-names use ordinal case-sensitive comparison. Method and content type compare
+names use ordinal case-sensitive comparison. Cookie matching reads the original
+Cookie header with the framework parser, preserving case-distinct and repeated
+names; values are percent-decoded for matching only. Proxy headers are unchanged.
+Method and content type compare
 case-insensitively; content-type parameters are excluded. Path matching uses the
 decoded path with case-sensitive segments; a trailing slash is equivalent for rule
 selection. Dangerous encodings, dot segments, backslashes and ambiguous separators
