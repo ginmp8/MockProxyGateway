@@ -27,10 +27,33 @@ internal sealed class BoundedRegexFilterSelector(JsonPath argument, Regex regex,
     {
         var mapped = new StringBuilder();
         var index = 0;
+        var depth = 0;
         while (index < pattern.Length)
         {
             var current = pattern[index];
-            if (current == '.')
+            if (current == '(')
+            {
+                if (++depth > 8)
+                    throw Invalid();
+                mapped.Append("(?:");
+                index++;
+                continue;
+            }
+            if (current == '|')
+            {
+                mapped.Append('|');
+                index++;
+                continue;
+            }
+            if (current == ')')
+            {
+                if (depth == 0)
+                    throw Invalid();
+                depth--;
+                mapped.Append(')');
+                index++;
+            }
+            else if (current == '.')
             {
                 // Dot matches one Unicode scalar except CR and LF.
                 mapped.Append(@"(?:[^\uD800-\uDFFF\r\n]|[\uD800-\uDBFF][\uDC00-\uDFFF])");
@@ -78,7 +101,7 @@ internal sealed class BoundedRegexFilterSelector(JsonPath argument, Regex regex,
             }
             else
             {
-                if (current is '(' or ')' or '|' or '*' or '+' or '?' or '{' or '}' or ']' ||
+                if (current is '*' or '+' or '?' or '{' or '}' or ']' ||
                     !Rune.TryGetRuneAt(pattern, index, out var rune))
                     throw Invalid();
                 var escaped = Regex.Escape(rune.ToString());
@@ -90,11 +113,46 @@ internal sealed class BoundedRegexFilterSelector(JsonPath argument, Regex regex,
             }
             if (index < pattern.Length && pattern[index] is '*' or '+' or '?')
                 mapped.Append(pattern[index++]);
+            else if (index < pattern.Length && pattern[index] == '{')
+                ReadRangeQuantifier(pattern, ref index, mapped);
         }
+        if (depth != 0)
+            throw Invalid();
 
         var source = fullMatch ? @"\A(?:" + mapped + @")\z" : mapped.ToString();
         return new Regex(source, RegexOptions.CultureInvariant | RegexOptions.NonBacktracking,
             TimeSpan.FromMilliseconds(25));
+    }
+
+    private static void ReadRangeQuantifier(string pattern, ref int index, StringBuilder mapped)
+    {
+        var start = index++;
+        var minimum = ReadRepeatBound(pattern, ref index);
+        if (index < pattern.Length && pattern[index] == ',')
+        {
+            index++;
+            if (index < pattern.Length && char.IsAsciiDigit(pattern[index]) &&
+                ReadRepeatBound(pattern, ref index) < minimum)
+                throw Invalid();
+        }
+        if (index >= pattern.Length || pattern[index++] != '}')
+            throw Invalid();
+        mapped.Append(pattern.AsSpan(start, index - start));
+    }
+
+    private static int ReadRepeatBound(string pattern, ref int index)
+    {
+        var start = index;
+        var bound = 0;
+        while (index < pattern.Length && char.IsAsciiDigit(pattern[index]))
+        {
+            bound = bound * 10 + pattern[index++] - '0';
+            if (bound > 64)
+                throw Invalid();
+        }
+        if (index == start)
+            throw Invalid();
+        return bound;
     }
 
     private static InvalidOperationException Invalid() =>
