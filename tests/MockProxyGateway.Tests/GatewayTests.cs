@@ -183,6 +183,53 @@ public sealed class GatewayTests
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
     }
 
+    [Theory]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.value\",\"operator\":\"between\",\"value\":[1]}")]
+    [InlineData("{\"source\":\"header\",\"key\":\"x\",\"operator\":\"greaterThan\",\"value\":2}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.value\",\"operator\":\"in\",\"value\":[]}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$..value\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"header\",\"key\":\"x\",\"operator\":\"regex\",\"value\":\"(\"}")]
+    [InlineData("{\"all\":[]}")]
+    public async Task InvalidConditionFailsActivation(string condition)
+    {
+        var rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
+              {"id":"invalid","priority":1,"conditions":CONDITION,
+               "action":{"mode":"mock","response":{"statusCode":201}}}
+            ]}}}
+            """.Replace("CONDITION", condition, StringComparison.Ordinal);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await using var fixture = await Fixture.StartAsync(rules);
+        });
+    }
+
+    [Fact]
+    public async Task ExactMethodAndRouteSpecificityOverrideWildcardAndServiceDefault()
+    {
+        const string rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"default":{"mode":"mock","response":{"statusCode":203}},
+            "endpoints":[
+              {"method":"*","path":"/x/{**rest}","default":{"mode":"mock","response":{"statusCode":202}}},
+              {"method":"GET","path":"/x/{id}","default":{"mode":"mock","response":{"statusCode":201}}},
+              {"method":"GET","path":"/x/exact","default":{"mode":"mock","response":{"statusCode":200}}}
+            ]}}}
+            """;
+        await using var fixture = await Fixture.StartAsync(rules);
+        var ct = TestContext.Current.CancellationToken;
+        using var exact = await fixture.Client.GetAsync("/mock-proxy/test/x/exact", ct);
+        using var template = await fixture.Client.GetAsync("/mock-proxy/test/x/id", ct);
+        using var wildcard = await fixture.Client.GetAsync("/mock-proxy/test/x/a/b", ct);
+        using var other = await fixture.Client.GetAsync("/mock-proxy/test/unmatched", ct);
+        using var post = new HttpRequestMessage(HttpMethod.Post, "/mock-proxy/test/x/exact");
+        using var wildcardMethod = await fixture.Client.SendAsync(post, ct);
+        Assert.Equal(HttpStatusCode.OK, exact.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, template.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, wildcard.StatusCode);
+        Assert.Equal(HttpStatusCode.NonAuthoritativeInformation, other.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, wildcardMethod.StatusCode);
+    }
+
     private sealed class Fixture(WebApplication app, HttpClient client, string directory) : IAsyncDisposable
     {
         public HttpClient Client { get; } = client;

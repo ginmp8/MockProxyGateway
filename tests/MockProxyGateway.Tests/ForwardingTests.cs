@@ -164,6 +164,125 @@ public sealed class ForwardingTests
         Assert.Equal(count, upstream.Requests.Count);
     }
 
+    [Fact]
+    public async Task ConcurrentRequestsAndHotRuleChangesRemainIsolated()
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var ct = TestContext.Current.CancellationToken;
+        var sample = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "mock-proxy-gateway.example.json"), ct))!;
+        foreach (var destination in sample["destinations"]!.AsObject())
+            destination.Value!["baseUrl"] = upstream.BaseUrl + destination.Key + "/";
+        var published = sample.ToJsonString();
+        await using var gateway = await StartGatewayAsync(sample, upstream,
+            provider: () => System.Text.Json.JsonElement.Parse(Volatile.Read(ref published)));
+        using var client = gateway.GetTestClient();
+        var endpointRules = sample["services"]!["compliance"]!["endpoints"]![0]!["rules"]!.AsArray();
+        JsonNode Rule(string id) => endpointRules.Single(x => (string?)x!["id"] == id)!;
+
+        var independent = Enumerable.Range(0, 12).Select(async index =>
+        {
+            var isRejected = index % 2 != 0;
+            using var request = CreateRequest("POST", "/mock-proxy/compliance/analysis",
+                isRejected ? """{"customer":{"riskScore":90}}""" : Body, "success");
+            request.Headers.TryAddWithoutValidation("X-Test-Session", "session-" + index);
+            using var response = await client.SendAsync(request, ct);
+            Assert.Equal(isRejected ? HttpStatusCode.UnprocessableEntity : HttpStatusCode.OK, response.StatusCode);
+            Assert.Contains(isRejected ? "Rejected" : "Approved", await response.Content.ReadAsStringAsync(ct), StringComparison.Ordinal);
+        });
+        await Task.WhenAll(independent);
+        Assert.Empty(upstream.Requests);
+
+        sample["services"]!["compliance"]!["rules"]![0]!["enabled"] = true;
+        Volatile.Write(ref published, sample.ToJsonString());
+        await EventuallyAsync("GET", "/mock-proxy/compliance/other", "service-unavailable", 503);
+        var count = upstream.Requests.Count;
+        using (var maintenance = CreateRequest("GET", "/mock-proxy/compliance/other", null, "service-unavailable"))
+        using (var response = await client.SendAsync(maintenance, ct))
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(count, upstream.Requests.Count);
+
+        Rule("rejected-by-body")["priority"] = 400;
+        Volatile.Write(ref published, sample.ToJsonString());
+        await EventuallyAsync("POST", "/mock-proxy/compliance/analysis", "success", 500, """{"customer":{"riskScore":90}}""");
+        Assert.Equal(count, upstream.Requests.Count);
+
+        Rule("rejected-by-body")["priority"] = 600;
+        Rule("success-by-header")["enabled"] = false;
+        sample["services"]!["compliance"]!["rules"]![0]!["enabled"] = false;
+        sample["services"]!["no-default"] = new JsonObject();
+        sample["services"]!["disabled-service"] = new JsonObject { ["enabled"] = false };
+        Volatile.Write(ref published, sample.ToJsonString());
+        await EventuallyAsync("POST", "/mock-proxy/compliance/analysis", "success", 201, Body);
+        var restored = upstream.Requests.Count;
+        await EventuallyAsync("GET", "/mock-proxy/compliance/other", "service-unavailable", 201);
+        Assert.Equal(restored + 1, upstream.Requests.Count);
+        using (var absent = await client.GetAsync("/mock-proxy/no-default/check", ct))
+            Assert.Equal(HttpStatusCode.NotFound, absent.StatusCode);
+        using (var disabled = await client.GetAsync("/mock-proxy/disabled-service/check", ct))
+            Assert.Equal(HttpStatusCode.NotFound, disabled.StatusCode);
+        Assert.Equal(restored + 1, upstream.Requests.Count);
+
+        Volatile.Write(ref published, "{");
+        await Task.Delay(1300, ct);
+        using var lastGood = CreateRequest("POST", "/mock-proxy/compliance/analysis", Body, "success");
+        using var forwarded = await client.SendAsync(lastGood, ct);
+        Assert.Equal(HttpStatusCode.Created, forwarded.StatusCode);
+        Assert.Equal(restored + 2, upstream.Requests.Count);
+
+        async Task EventuallyAsync(string method, string path, string scenario, int status, string? body = null)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (DateTime.UtcNow < deadline)
+            {
+                using var request = CreateRequest(method, path, body, scenario);
+                using var response = await client.SendAsync(request, ct);
+                if ((int)response.StatusCode == status)
+                    return;
+                await Task.Delay(100, ct);
+            }
+            Assert.Fail("A validated configuration update did not become active.");
+        }
+    }
+
+    [Fact]
+    public async Task NonInspectedBinaryBodyStreamsBeforeClientFinishesSending()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var firstByte = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var captured = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var upstream = await Upstream.StartAsync(async context =>
+        {
+            var first = new byte[1];
+            await context.Request.Body.ReadExactlyAsync(first, context.RequestAborted);
+            firstByte.TrySetResult();
+            using var bytes = new MemoryStream();
+            bytes.WriteByte(first[0]);
+            await context.Request.Body.CopyToAsync(bytes, context.RequestAborted);
+            captured.TrySetResult(bytes.ToArray());
+            context.Response.StatusCode = 201;
+            await context.Response.WriteAsync("streamed", context.RequestAborted);
+        });
+        var json = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+            "services":{"stream":{"default":{"mode":"proxy","destination":"real"}}}}
+            """)!;
+        json["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        await using var gateway = await StartGatewayAsync(json, upstream, realServer: true);
+        var address = new Uri(gateway.Urls.Single());
+        using var client = new System.Net.Sockets.TcpClient();
+        await client.ConnectAsync(address.Host, address.Port, ct);
+        using var wire = client.GetStream();
+        var headers = Encoding.ASCII.GetBytes("POST /mock-proxy/stream/upload HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/octet-stream\r\nContent-Length: 4\r\nConnection: close\r\n\r\n");
+        await wire.WriteAsync(headers, ct);
+        await wire.WriteAsync(new byte[] { 0xff }, ct);
+        // An eager body buffer would deadlock this handshake. Only send the rest after upstream sees byte one.
+        await firstByte.Task.WaitAsync(TimeSpan.FromSeconds(8), ct);
+        await wire.WriteAsync(new byte[] { 0x00, 0x01, 0xfe }, ct);
+        Assert.Equal(new byte[] { 0xff, 0x00, 0x01, 0xfe }, await captured.Task.WaitAsync(TimeSpan.FromSeconds(8), ct));
+        using var reader = new StreamReader(wire, Encoding.ASCII);
+        Assert.Contains("201", (await reader.ReadLineAsync(ct)) ?? "", StringComparison.Ordinal);
+    }
+
     private static HttpRequestMessage CreateRequest(string method, string url, string? body, string? scenario = null)
     {
         var request = new HttpRequestMessage(new HttpMethod(method), url);
@@ -174,7 +293,8 @@ public sealed class ForwardingTests
         return request;
     }
 
-    private static async Task<WebApplication> StartGatewayAsync(JsonNode json, Upstream upstream, bool realServer = false)
+    private static async Task<WebApplication> StartGatewayAsync(JsonNode json, Upstream upstream, bool realServer = false,
+        Func<System.Text.Json.JsonElement>? provider = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
         if (realServer)
@@ -183,8 +303,8 @@ public sealed class ForwardingTests
             builder.WebHost.UseTestServer();
         builder.Services.AddMockProxyGateway(options =>
         {
-            options.ProgrammaticRules = () => System.Text.Json.JsonSerializer.SerializeToElement(json);
-            options.ReloadOnChange = false;
+            options.ProgrammaticRules = provider ?? (() => System.Text.Json.JsonSerializer.SerializeToElement(json));
+            options.ReloadOnChange = provider is not null;
             options.AllowLoopbackForTests = true;
             options.AllowedDestinationAuthorities = [new Uri(upstream.BaseUrl).Authority];
         });
@@ -210,7 +330,7 @@ public sealed class ForwardingTests
         internal string BaseUrl => app.Urls.Single().TrimEnd('/') + "/";
         internal ConcurrentQueue<Captured> Requests => requests;
 
-        internal static async Task<Upstream> StartAsync()
+        internal static async Task<Upstream> StartAsync(Func<HttpContext, Task>? handler = null)
         {
             var requests = new ConcurrentQueue<Captured>();
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
@@ -218,6 +338,11 @@ public sealed class ForwardingTests
             var app = builder.Build();
             app.Run(async context =>
             {
+                if (handler is not null)
+                {
+                    await handler(context);
+                    return;
+                }
                 using var reader = new StreamReader(context.Request.Body, Encoding.UTF8, leaveOpen: true);
                 var body = await reader.ReadToEndAsync(context.RequestAborted);
                 requests.Enqueue(new Captured(context.Request.Method, context.Features.Get<IHttpRequestFeature>()!.RawTarget,
