@@ -43,7 +43,10 @@ internal sealed class ProxyTransport : IDisposable
     private async ValueTask<Stream> ConnectAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)
     {
         var addresses = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, cancellationToken).ConfigureAwait(false);
-        if (addresses.Length == 0 || addresses.Any(x => !ProxyDestinationPolicy.IsApproved(x, _options)))
+        var literalLoopback = IPAddress.TryParse(context.DnsEndPoint.Host.Trim('[', ']'), out var literal) &&
+            IPAddress.IsLoopback(literal);
+        if (addresses.Length == 0 || addresses.Any(x => !ProxyDestinationPolicy.IsApproved(x, _options) ||
+            (IPAddress.IsLoopback(x.IsIPv4MappedToIPv6 ? x.MapToIPv4() : x) && !literalLoopback)))
             throw new HttpRequestException("Gateway destination address was not approved.");
         var address = addresses[0];
         var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);

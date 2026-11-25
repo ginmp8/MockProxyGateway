@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: [main, 'feat/**']
+    branches: [main]
   pull_request:
     branches: [main]
 permissions:
@@ -19,18 +19,8 @@ jobs:
           global-json-file: global.json
       - name: SDK information
         run: dotnet --info
-      - name: Restore (initial lockfile bootstrap)
-        shell: bash
-        run: |
-          if ! git ls-files --error-unmatch src/MockProxyGateway.Core/packages.lock.json src/MockProxyGateway.Host/packages.lock.json tests/MockProxyGateway.Tests/packages.lock.json >/dev/null 2>&1; then
-            dotnet restore MockProxyGateway.sln --use-lock-file
-            for f in $(find src tests -name packages.lock.json | sort); do
-              echo "::group::$f"
-              cat "$f"
-              echo "::endgroup::"
-            done
-          fi
-          dotnet restore MockProxyGateway.sln --locked-mode
+      - name: Restore locked dependencies
+        run: dotnet restore MockProxyGateway.sln --locked-mode
       - name: Release build
         run: dotnet build MockProxyGateway.sln -c Release --no-restore
       - name: Test
@@ -48,6 +38,10 @@ jobs:
         run: dotnet package list --vulnerable --include-transitive
       - name: Pack Core
         run: dotnet pack src/MockProxyGateway.Core/MockProxyGateway.Core.csproj -c Release --no-build --no-restore -o artifacts/packages
+      - name: Package-only embedded consumer
+        run: bash scripts/package-smoke.sh
+      - name: Standalone Docker smoke
+        run: bash scripts/docker-smoke.sh
       - name: Require committed lockfiles
         run: |
           git ls-files --error-unmatch src/MockProxyGateway.Core/packages.lock.json src/MockProxyGateway.Host/packages.lock.json tests/MockProxyGateway.Tests/packages.lock.json

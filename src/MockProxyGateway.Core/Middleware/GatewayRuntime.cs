@@ -52,6 +52,13 @@ internal sealed partial class GatewayRuntime : IDisposable
             context.Response.StatusCode = 400;
             return;
         }
+        // Tunnels and upgraded protocols are deliberately outside the HTTP v1 contract.
+        if (string.Equals(context.Request.Method, "CONNECT", StringComparison.OrdinalIgnoreCase) ||
+            context.Request.Headers.ContainsKey("Upgrade"))
+        {
+            context.Response.StatusCode = 400;
+            return;
+        }
         if (!_concurrency.Wait(0))
         {
             context.Response.StatusCode = 503;
@@ -114,8 +121,9 @@ internal sealed partial class GatewayRuntime : IDisposable
         }
         finally
         {
-            Completed(_logger, alias, ruleId, action, context.Response.StatusCode, snapshot.Version,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds, context.TraceIdentifier);
+            if (_logger.IsEnabled(LogLevel.Information))
+                Completed(_logger, alias, ruleId, action, context.Response.StatusCode, snapshot.Version,
+                    Stopwatch.GetElapsedTime(started).TotalMilliseconds, context.TraceIdentifier);
             _concurrency.Release();
         }
     }

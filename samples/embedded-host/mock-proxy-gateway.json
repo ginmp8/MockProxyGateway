@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "destinations": {
+    "local": {
+      "baseUrl": "http://127.0.0.1:5181/"
+    }
+  },
+  "services": {
+    "demo": {
+      "default": {
+        "mode": "proxy",
+        "destination": "local"
+      },
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/health",
+          "default": {
+            "mode": "mock",
+            "response": {
+              "statusCode": 200,
+              "text": "mock-health"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
