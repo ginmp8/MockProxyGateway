@@ -217,6 +217,33 @@ public sealed class ForwardingTests
         Assert.Equal(count, upstream.Requests.Count);
     }
 
+    [Theory]
+    [InlineData("/mock-proxy/a/../../api/health", 400)]
+    [InlineData("/%6dock-proxy/a/../../api/health", 400)]
+    [InlineData("/%6dock-proxy/a/%2e%2e/%2e%2e/api/health", 400)]
+    [InlineData("/mock-proxy-other/../api/health", 200)]
+    [InlineData("/%6dock-proxy-other/../api/health", 200)]
+    [InlineData("/api/health", 200)]
+    public async Task NormalizedGatewayTraversalCannotReachUnrelatedHostRoute(string target, int expected)
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        await using var gateway = await StartGatewayAsync(rules, upstream, realServer: true);
+        using var client = new HttpClient(new SocketsHttpHandler { UseProxy = false, AllowAutoRedirect = false });
+        var ct = TestContext.Current.CancellationToken;
+        var uri = new Uri(gateway.Urls.Single().TrimEnd('/') + target,
+            new UriCreationOptions { DangerousDisablePathAndQueryCanonicalization = true });
+        using var response = await client.GetAsync(uri, ct);
+        Assert.Equal((HttpStatusCode)expected, response.StatusCode);
+        if (expected == 200)
+            Assert.Equal("normal", await response.Content.ReadAsStringAsync(ct));
+        Assert.Empty(upstream.Requests);
+    }
+
     [Fact]
     public async Task ConcurrentRequestsAndHotRuleChangesRemainIsolated()
     {

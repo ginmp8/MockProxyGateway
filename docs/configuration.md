@@ -87,7 +87,9 @@ case-insensitively; content-type parameters are excluded. Path matching uses the
 decoded path with case-sensitive segments; a trailing slash is equivalent for rule
 selection. Dangerous encodings, dot segments, backslashes and ambiguous separators
 are rejected. The forwarding path and query retain original valid percent encoding;
-configured pathRewrite is already escaped and replaces only the path.
+configured pathRewrite is already escaped and replaces only the path. Unsafe original
+gateway targets are rejected even if host normalization has moved the request
+outside the gateway prefix, including percent-encoded prefix characters.
 
 ## Operators
 

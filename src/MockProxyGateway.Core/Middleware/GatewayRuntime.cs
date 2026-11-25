@@ -40,7 +40,14 @@ internal sealed partial class GatewayRuntime : IDisposable
         {
             // Reject an unsafe original gateway target even if the host normalized it outside the branch.
             var rawPrefix = context.Request.PathBase.ToUriComponent() + prefix.ToUriComponent();
-            if (rawPath is not null && GatewayPaths.StartsWithSegment(rawPath, rawPrefix) && !GatewayPaths.IsSafe(rawPath))
+            // Kestrel can decode an escaped prefix and remove dot segments before
+            // middleware sees Request.Path. Classify the original target as well,
+            // including percent-encoded prefix characters, before passing it on.
+            var decodedPrefix = context.Request.PathBase.Add(prefix).Value!;
+            if (rawPath is not null &&
+                (GatewayPaths.StartsWithSegment(rawPath, rawPrefix) ||
+                 GatewayPaths.StartsWithSegment(Uri.UnescapeDataString(rawPath), decodedPrefix)) &&
+                (!GatewayPaths.IsSafe(rawPath) || !GatewayPaths.IsEscapedTargetPart(rawPath, query: false)))
             {
                 context.Response.StatusCode = 400;
                 return;
