@@ -191,7 +191,7 @@ internal sealed partial class RuleCompiler(GatewayOptions options, string conten
                 throw Invalid("Invalid JSONPath selector.");
         }
         return new Condition("leaf", [], source, key, op, hasValue ? operand.Clone() : default,
-            quantifier, ignoreCase, regex, jsonPath);
+            quantifier, ignoreCase, regex, jsonPath, hasValue ? 1 + operand.GetRawText().Length / 64 : 0);
     }
 
     [GeneratedRegex("""^\$(?:\.[A-Za-z_][A-Za-z0-9_]*|\.\*|\[(?:\*|-?(?:0|[1-9][0-9]{0,7})|'(?:[^'\\\x00-\x1F]|\\(?:['\\/bfnrt]|u[0-9A-Fa-f]{4}))*'|"(?:[^"\\\x00-\x1F]|\\(?:["\\/bfnrt]|u[0-9A-Fa-f]{4}))*")\]){0,16}$""", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)]
@@ -216,7 +216,8 @@ internal sealed partial class RuleCompiler(GatewayOptions options, string conten
             Only(item, "mode", "destination", "pathRewrite");
             var destination = Text(item, "destination");
             var rewrite = OptionalText(item, "pathRewrite");
-            if (!destinations.ContainsKey(destination) || (rewrite is not null && !GatewayPaths.IsSafe(rewrite)))
+            if (!destinations.ContainsKey(destination) || (rewrite is not null &&
+                (!GatewayPaths.IsSafe(rewrite) || !GatewayPaths.IsEscapedTargetPart(rewrite, query: false))))
                 throw Invalid("Invalid proxy destination or rewrite.");
             return new RuleAction(mode, destination, rewrite, null);
         }

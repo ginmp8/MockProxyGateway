@@ -1,7 +1,10 @@
 using System.Collections.Concurrent;
+using System.Security.Claims;
+using System.Text.Encodings.Web;
 using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -9,6 +12,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace MockProxyGateway.Tests;
@@ -81,7 +85,10 @@ public sealed class ForwardingTests
             using var response = await client.SendAsync(request, ct);
             Assert.Equal((HttpStatusCode)status, response.StatusCode);
             if (expectedBody is not null)
+            {
                 Assert.Contains(expectedBody, await response.Content.ReadAsStringAsync(ct), StringComparison.Ordinal);
+                Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+            }
             if (retryAfter is not null)
                 Assert.Equal(retryAfter, response.Headers.GetValues("Retry-After").Single());
             Assert.Equal(before + (expectedUpstream is null ? 0 : 1), upstream.Requests.Count);
@@ -92,6 +99,7 @@ public sealed class ForwardingTests
                 Assert.Equal(method, forwarded.Method);
                 Assert.Equal(payload ?? "", forwarded.Body);
                 Assert.Equal("from-upstream", response.Headers.GetValues("X-Upstream").Single());
+                Assert.Equal("upstream", await response.Content.ReadAsStringAsync(ct));
             }
         }
     }
@@ -409,6 +417,167 @@ public sealed class ForwardingTests
                 o.AllowedDestinationAddresses = [uri.Host.Trim('[', ']')];
             });
         });
+        Assert.Empty(upstream.Requests);
+    }
+
+    [Theory]
+    [InlineData("{", "application/json", 400)]
+    [InlineData("not-json", "text/plain", 415)]
+    public async Task RequiredInspectionFailureCannotReachDefaultProxy(string payload, string mediaType, int expected)
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var sample = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory,
+            "mock-proxy-gateway.example.json"), TestContext.Current.CancellationToken))!;
+        foreach (var destination in sample["destinations"]!.AsObject())
+            destination.Value!["baseUrl"] = upstream.BaseUrl + destination.Key + "/";
+        await using var gateway = await StartGatewayAsync(sample, upstream);
+        using var client = gateway.GetTestClient();
+        var ct = TestContext.Current.CancellationToken;
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/mock-proxy/compliance/analysis")
+        {
+            Content = new StringContent(payload, Encoding.UTF8, mediaType)
+        };
+        using var rejected = await client.SendAsync(request, ct);
+        Assert.Equal((HttpStatusCode)expected, rejected.StatusCode);
+        Assert.Empty(upstream.Requests);
+
+        using var oversized = new HttpRequestMessage(HttpMethod.Post, "/mock-proxy/compliance/analysis")
+        {
+            Content = new StringContent(new string('x', 1_048_577), Encoding.UTF8, "application/json")
+        };
+        using var tooLarge = await client.SendAsync(oversized, ct);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, tooLarge.StatusCode);
+        Assert.Empty(upstream.Requests);
+
+        // A higher-priority explicit real action must not inspect a body it does not need.
+        using var real = new HttpRequestMessage(HttpMethod.Post, "/mock-proxy/compliance/analysis")
+        {
+            Content = new StringContent(payload, Encoding.UTF8, mediaType)
+        };
+        real.Headers.Add("X-Test-Scenario", "real");
+        using var forwarded = await client.SendAsync(real, ct);
+        Assert.Equal(HttpStatusCode.Created, forwarded.StatusCode);
+        Assert.Equal(payload, Assert.Single(upstream.Requests).Body);
+    }
+
+    [Fact]
+    public async Task OptionalNamedPolicyProtectsRealForwardingAndPreservesSeparateHostPolicy()
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        builder.WebHost.UseTestServer();
+        builder.Services.AddAuthentication("synthetic").AddScheme<AuthenticationSchemeOptions, SyntheticAuthenticationHandler>(
+            "synthetic", _ => { });
+        builder.Services.AddAuthorization(o =>
+        {
+            o.AddPolicy("gateway", p => p.AddAuthenticationSchemes("synthetic").RequireClaim("scope", "gateway"));
+            o.AddPolicy("host", p => p.AddAuthenticationSchemes("synthetic").RequireClaim("scope", "host"));
+        });
+        builder.Services.AddMockProxyGateway(o =>
+        {
+            o.ProgrammaticRules = () => System.Text.Json.JsonSerializer.SerializeToElement(rules);
+            o.AuthorizationPolicy = "gateway";
+            o.AllowLoopbackForTests = true;
+            o.AllowedDestinationAuthorities = [new Uri(upstream.BaseUrl).Authority];
+        });
+        await using var app = builder.Build();
+        app.UseAuthentication();
+        app.UseAuthorization();
+        app.UseMockProxyGateway();
+        app.MapGet("/host", () => "host-owned").RequireAuthorization("host");
+        var ct = TestContext.Current.CancellationToken;
+        await app.StartAsync(ct);
+        using var client = app.GetTestClient();
+
+        using var anonymous = await client.GetAsync("/mock-proxy/a/check", ct);
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        using var wrong = new HttpRequestMessage(HttpMethod.Get, "/mock-proxy/a/check");
+        wrong.Headers.Add("X-Synthetic-Scope", "host");
+        using var forbidden = await client.SendAsync(wrong, ct);
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+        Assert.Empty(upstream.Requests);
+
+        using var allowed = new HttpRequestMessage(HttpMethod.Get, "/mock-proxy/a/check");
+        allowed.Headers.Add("X-Synthetic-Scope", "gateway");
+        using var proxied = await client.SendAsync(allowed, ct);
+        Assert.Equal(HttpStatusCode.Created, proxied.StatusCode);
+        Assert.Single(upstream.Requests);
+
+        using var hostOnly = new HttpRequestMessage(HttpMethod.Get, "/host");
+        hostOnly.Headers.Add("X-Synthetic-Scope", "host");
+        using var hostResponse = await client.SendAsync(hostOnly, ct);
+        Assert.Equal("host-owned", await hostResponse.Content.ReadAsStringAsync(ct));
+        using var notHost = new HttpRequestMessage(HttpMethod.Get, "/host");
+        notHost.Headers.Add("X-Synthetic-Scope", "gateway");
+        using var notHostResponse = await client.SendAsync(notHost, ct);
+        Assert.Equal(HttpStatusCode.Forbidden, notHostResponse.StatusCode);
+        Assert.Single(upstream.Requests);
+    }
+
+    private sealed class SyntheticAuthenticationHandler(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger,
+        UrlEncoder encoder) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+    {
+        protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+        {
+            var scope = Request.Headers["X-Synthetic-Scope"].ToString();
+            if (scope is not ("host" or "gateway"))
+                return Task.FromResult(AuthenticateResult.NoResult());
+            var identity = new ClaimsIdentity([new Claim("scope", scope)], Scheme.Name);
+            return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), Scheme.Name)));
+        }
+    }
+
+    [Fact]
+    public async Task CombinedScenarioNegationAndAlternateBodyBranchDoNotLeakAcrossRequests()
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var ct = TestContext.Current.CancellationToken;
+        var sample = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "mock-proxy-gateway.example.json"), ct))!;
+        foreach (var destination in sample["destinations"]!.AsObject())
+            destination.Value!["baseUrl"] = upstream.BaseUrl + destination.Key + "/";
+        await using var gateway = await StartGatewayAsync(sample, upstream);
+        using var client = gateway.GetTestClient();
+        using var organization = CreateRequest("POST", "/mock-proxy/compliance/analysis", """{"customer":{"type":"Organization"}}""");
+        organization.Headers.Add("X-Test-Session", "session-a");
+        using var matched = await client.SendAsync(organization, ct);
+        Assert.Equal(HttpStatusCode.OK, matched.StatusCode);
+        Assert.Contains("composite", await matched.Content.ReadAsStringAsync(ct), StringComparison.Ordinal);
+        Assert.Empty(upstream.Requests);
+
+        using var disabled = CreateRequest("POST", "/mock-proxy/compliance/analysis?simulate=success", Body);
+        disabled.Headers.Add("X-Test-Session", "session-a");
+        disabled.Headers.Add("X-Disable-Scenario", "true");
+        using var proxy = await client.SendAsync(disabled, ct);
+        Assert.Equal(HttpStatusCode.Created, proxy.StatusCode);
+        Assert.Equal("/compliance-real/analysis?simulate=success", Assert.Single(upstream.Requests).Target);
+    }
+
+    [Fact]
+    public async Task DeniedDnsAddressNeverEstablishesEvenATcpConnection()
+    {
+        await using var upstream = await Upstream.StartAsync();
+        using var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var target = $"https://localhost:{((IPEndPoint)listener.LocalEndpoint).Port}/";
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"https://localhost/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = target;
+        await using var gateway = await StartGatewayAsync(rules, upstream, configure: o =>
+        {
+            o.AllowedDestinationAuthorities = [new Uri(target).Authority];
+            o.ProxyTimeoutSeconds = 2;
+        });
+        using var client = gateway.GetTestClient();
+        using var response = await client.GetAsync("/mock-proxy/a/check", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        Assert.False(listener.Pending());
         Assert.Empty(upstream.Requests);
     }
 

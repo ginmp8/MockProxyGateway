@@ -12,5 +12,6 @@ internal sealed record Rule(string Id, bool Enabled, int Priority, DateTimeOffse
 internal sealed record RuleAction(string Mode, string? Destination, string? PathRewrite, MockResponse? Response);
 internal sealed record MockResponse(int StatusCode, IReadOnlyDictionary<string, string> Headers, byte[]? Body, string? ContentType, int DelayMs);
 internal sealed record Condition(string Kind, Condition[] Children, string? Source = null, string? Key = null, string? Operator = null,
-    JsonElement Value = default, string Quantifier = "any", bool IgnoreCase = false, Regex? Regex = null, JsonPath? JsonPath = null);
+    JsonElement Value = default, string Quantifier = "any", bool IgnoreCase = false, Regex? Regex = null, JsonPath? JsonPath = null,
+    int OperandCost = 0);
 internal sealed record Selection(RuleAction? Action, string RuleId);

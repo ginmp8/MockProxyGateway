@@ -23,6 +23,7 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
     private int _budget = 65536;
     private int _bodyNodes;
     private long _selectionBytes;
+    private int _regexRemaining = 64;
     private readonly Dictionary<string, JsonElement[]> _bodySelections = new(StringComparer.Ordinal);
 
     internal async ValueTask<Selection> ResolveAsync(ServiceRules service, string path)
@@ -244,6 +245,7 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
         var cost = 1L + (length / 64L);
         if (condition.Operator is "in" or "notIn")
             cost *= operand.GetArrayLength();
+        cost += condition.OperandCost;
         if (cost > int.MaxValue)
             throw new RequestFailure(400, "evaluation-budget");
         Charge((int)cost);
@@ -265,8 +267,11 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
             case "startsWith": return actual.ValueKind == JsonValueKind.String && actual.GetString()!.StartsWith(operand.GetString()!, comparison);
             case "endsWith": return actual.ValueKind == JsonValueKind.String && actual.GetString()!.EndsWith(operand.GetString()!, comparison);
             case "regex":
-                try { return actual.ValueKind == JsonValueKind.String && condition.Regex!.IsMatch(actual.GetString()!); }
-                catch (RegexMatchTimeoutException) { throw new RequestFailure(400, "regex-timeout"); }
+                if (actual.ValueKind != JsonValueKind.String)
+                    return false;
+                if (--_regexRemaining < 0)
+                    throw new RequestFailure(400, "regex-budget");
+                return MatchRegex(condition.Regex!, actual.GetString()!);
             default:
                 if (actual.ValueKind != JsonValueKind.Number)
                     return false;
@@ -283,5 +288,11 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                     _ => throw new RequestFailure(500)
                 };
         }
+    }
+    // Kept as one boundary so timeout classification can be exercised with the real regex engine.
+    internal static bool MatchRegex(Regex regex, string value)
+    {
+        try { return regex.IsMatch(value); }
+        catch (RegexMatchTimeoutException) { throw new RequestFailure(400, "regex-timeout"); }
     }
 }

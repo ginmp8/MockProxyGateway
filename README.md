@@ -257,7 +257,7 @@ An endpoint can contain multiple independently enabled rules, each with its own 
 | Cookie | test-session = session-b |
 | Content type | application/json |
 
-The matcher implements nested `all` (AND), `any` (OR), and `not` (NOT) groups, typed comparisons, existence and null checks, string operations, regular expressions, collection membership, numeric comparisons, and structural JSON equality. The current bounded JSONPath subset supports simple property names, nonnegative array indices, and `[*]` array wildcards (up to 16 segments). Recursive descent, filters, scripts and other selectors are rejected; this is not unrestricted RFC 9535 coverage. Numeric range comparisons use exact decimal values. Multi-value conditions have explicit quantifiers.
+The matcher implements nested `all` (AND), `any` (OR), and `not` (NOT) groups, typed comparisons, existence and null checks, string operations, regular expressions, collection membership, numeric comparisons, and structural JSON equality. The bounded JSONPath subset supports simple and quoted property names, positive/negative array indices, and array/object wildcards (up to 16 segments and 256 characters). Recursive descent, unions, slices, filters and other selectors are rejected; this is not unrestricted RFC 9535 coverage. Numeric range comparisons use exact decimal values. Multi-value conditions have explicit quantifiers.
 
 Rule selection follows this hierarchy:
 
@@ -339,7 +339,7 @@ bash scripts/package-smoke.sh
 bash scripts/docker-smoke.sh
 ```
 
-Use the [rule JSON Schema](docs/rules.schema.json) for structural validation and the [implementation checkpoint](docs/implementation-status.md) for current limitations. The runtime adds semantic checks beyond JSON Schema.
+Use the [rule JSON Schema](docs/rules.schema.json) for structural validation and the [configuration and local usage reference](docs/configuration.md) for every setting, operator, safety boundary and runnable example. Run `bash scripts/example-scenarios.sh --verify` after building to exercise the pinned example with curl and a synthetic local upstream. The [acceptance trace](docs/acceptance-matrix.md) maps every normative scenario and AC to executable evidence. The runtime adds semantic checks beyond JSON Schema.
 
 ## Scope and roadmap
 
@@ -347,4 +347,4 @@ The first release focuses on incoming HTTP middleware, declarative matching, moc
 
 ## License
 
-MockProxyGateway is licensed under the [MIT License](LICENSE).
+MockProxyGateway is licensed under the [MIT License](LICENSE). See [third-party notices](THIRD-PARTY-NOTICES.md) for the exact runtime dependency license metadata.

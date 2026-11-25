@@ -328,6 +328,34 @@ public sealed class GatewayTests
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    [Fact]
+    public async Task RegexEvaluationBudgetRejectsExcessiveFanoutWithoutDefaultAction()
+    {
+        const string rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"default":{"mode":"mock","response":{"statusCode":200}},
+              "rules":[{"id":"regex","priority":1,"conditions":{"source":"body","key":"$.values[*]","operator":"regex","value":"^match$"},
+              "action":{"mode":"mock","response":{"statusCode":201}}}]}}}
+            """;
+        await using var fixture = await Fixture.StartAsync(rules);
+        using var content = JsonContent.Create(new { values = Enumerable.Repeat("miss", 65).ToArray() });
+        using var response = await fixture.Client.PostAsync("/mock-proxy/test/check", content, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DelayedMockReturnsConfiguredBodyAfterDelay()
+    {
+        const string rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"default":{"mode":"mock","response":{"statusCode":202,"delayMs":100,"text":"delayed"}}}}}
+            """;
+        await using var fixture = await Fixture.StartAsync(rules);
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        using var response = await fixture.Client.GetAsync("/mock-proxy/test/check", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal("delayed", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.True(System.Diagnostics.Stopwatch.GetElapsedTime(started) >= TimeSpan.FromMilliseconds(75));
+    }
+
     private sealed class Fixture(WebApplication app, HttpClient client, string directory) : IAsyncDisposable
     {
         public HttpClient Client { get; } = client;

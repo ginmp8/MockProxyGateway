@@ -13,7 +13,7 @@ with ZipFile(packages[0]) as archive:
     assemblies = sorted(n for n in names if n.endswith(".dll"))
     assert assemblies == ["lib/net10.0/MockProxyGateway.Core.dll"], assemblies
     assert "lib/net10.0/MockProxyGateway.Core.xml" in names, "Missing public XML docs"
-    assert "README.md" in names and "LICENSE" in names
+    assert "README.md" in names and "LICENSE" in names and "THIRD-PARTY-NOTICES.md" in names
     nuspec = ET.fromstring(archive.read(next(n for n in names if n.endswith(".nuspec"))))
     metadata = nuspec.find("{*}metadata")
     assert metadata.findtext("{*}id") == "MockProxyGateway"
@@ -36,6 +36,9 @@ for name, resolved in lock.items():
     url = nuspec.findtext("{*}licenseUrl")
     print(f"{name} {version}: license={license_element.text if license_element is not None else None}, "
           f"type={license_element.attrib.get('type') if license_element is not None else None}, url={url}")
+    assert license_element is not None and license_element.attrib.get("type") == "expression" and license_element.text == "MIT", (
+        "Runtime dependency license differs from reviewed MIT metadata; review explicitly", name, version
+    )
     if license_element is not None and license_element.attrib.get("type") == "file":
         license_path = folder / license_element.text
         assert license_path.is_file()

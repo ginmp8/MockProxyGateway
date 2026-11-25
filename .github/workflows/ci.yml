@@ -51,6 +51,8 @@ jobs:
                   Draft202012Validator(schema).validate(json.load(f))
               print("Validated", path)
           PY
+      - name: Exercise pinned sample with local curl requests
+        run: bash scripts/example-scenarios.sh --verify
       - name: Pack Core
         run: dotnet pack src/MockProxyGateway.Core/MockProxyGateway.Core.csproj -c Release --no-build --no-restore -o artifacts/packages
       - name: Inspect packed assembly and runtime dependency licenses

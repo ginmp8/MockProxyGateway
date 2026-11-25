@@ -23,7 +23,8 @@ public static class MockProxyGatewayApplicationBuilderExtensions
             !(options.AllowedEnvironments ?? ["Development"]).Contains(env.EnvironmentName, StringComparer.OrdinalIgnoreCase))
             throw new InvalidOperationException("Gateway activation is not permitted in this environment.");
         var path = prefix ?? options.Prefix;
-        if (!GatewayPaths.IsSafe(path) || path == "/" || path.EndsWith('/') || path.Contains('%'))
+        if (!GatewayPaths.IsSafe(path) || !GatewayPaths.IsEscapedTargetPart(path, query: false) ||
+            path == "/" || path.EndsWith('/') || path.Contains('%'))
             throw new InvalidOperationException("Invalid gateway prefix.");
         if (options.MaxBodySizeBytes is < 1 or > 16_777_216 ||
             options.MaxConcurrentRequests is < 1 or > 1024 || options.ProxyTimeoutSeconds is < 1 or > 300)

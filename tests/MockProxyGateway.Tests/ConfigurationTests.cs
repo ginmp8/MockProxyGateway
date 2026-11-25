@@ -443,4 +443,108 @@ public sealed class ConfigurationTests
         Assert.Throws<InvalidOperationException>(() => app.UseMockProxyGateway());
     }
 
+
+    [Fact]
+    public async Task ExpiryUsesHostTimeProviderAtTheExactBoundaryWithoutReload()
+    {
+        var boundary = new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var clock = new ManualClock(boundary.AddSeconds(-1));
+        const string rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"demo":{"default":{"mode":"mock","response":{"statusCode":200,"text":"default"}},
+              "rules":[{"id":"temporary","priority":10,"expiresAt":"2030-01-01T00:00:00Z",
+               "conditions":{"source":"header","key":"X-Scenario","operator":"exists"},
+               "action":{"mode":"mock","response":{"statusCode":201,"text":"temporary"}}}]}}}
+            """;
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton<TimeProvider>(clock);
+        builder.Services.AddMockProxyGateway(o =>
+        {
+            o.ReloadOnChange = false;
+            o.ProgrammaticRules = () => JsonElement.Parse(rules);
+        });
+        await using var app = builder.Build();
+        app.UseMockProxyGateway();
+        var ct = TestContext.Current.CancellationToken;
+        await app.StartAsync(ct);
+        using var client = app.GetTestClient();
+        client.DefaultRequestHeaders.Add("X-Scenario", "synthetic");
+        using var before = await client.GetAsync("/mock-proxy/demo/check", ct);
+        Assert.Equal(HttpStatusCode.Created, before.StatusCode);
+        clock.Set(boundary);
+        Assert.Equal("default", await client.GetStringAsync("/mock-proxy/demo/check", ct));
+    }
+
+    private sealed class ManualClock(DateTimeOffset initial) : TimeProvider
+    {
+        private long _ticks = initial.UtcTicks;
+        public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref _ticks), TimeSpan.Zero);
+        internal void Set(DateTimeOffset value) => Interlocked.Exchange(ref _ticks, value.UtcTicks);
+    }
+
+    [Fact]
+    public async Task AddingAndRemovingRulesKeepsConcurrentReadersOnWholeSnapshots()
+    {
+        var current = """
+            {"schemaVersion":1,"destinations":{},"services":{"demo":{"default":{"mode":"mock","response":{"statusCode":200,"text":"old"}}}}}
+            """;
+        var initial = current;
+        var candidate = JsonNode.Parse(initial)!;
+        candidate["services"]!["demo"]!["rules"] = JsonNode.Parse("""
+            [{"id":"added","priority":1,"conditions":{"source":"header","key":"X-Scenario","operator":"exists"},
+              "action":{"mode":"mock","response":{"statusCode":201,"text":"new"}}}]
+            """);
+        var changed = candidate.ToJsonString();
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        builder.WebHost.UseTestServer();
+        builder.Services.AddMockProxyGateway(o => o.ProgrammaticRules = () => JsonElement.Parse(Volatile.Read(ref current)));
+        await using var app = builder.Build();
+        app.UseMockProxyGateway();
+        var ct = TestContext.Current.CancellationToken;
+        await app.StartAsync(ct);
+        using var client = app.GetTestClient();
+        client.DefaultRequestHeaders.Add("X-Scenario", "synthetic");
+        Assert.Equal("old", await client.GetStringAsync("/mock-proxy/demo/check", ct));
+        using var readersStop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var seen = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
+        var readers = Enumerable.Range(0, 4).Select(async _ =>
+        {
+            while (!readersStop.IsCancellationRequested)
+            {
+                using var response = await client.GetAsync("/mock-proxy/demo/check", ct);
+                var text = await response.Content.ReadAsStringAsync(ct);
+                Assert.True((response.StatusCode == HttpStatusCode.OK && text == "old") ||
+                    (response.StatusCode == HttpStatusCode.Created && text == "new"));
+                seen.TryAdd(text, 0);
+                await Task.Delay(20, ct);
+            }
+        }).ToArray();
+        try
+        {
+            Volatile.Write(ref current, changed);
+            await WaitForAsync("new");
+            Volatile.Write(ref current, initial);
+            await WaitForAsync("old");
+        }
+        finally
+        {
+            await readersStop.CancelAsync();
+            await Task.WhenAll(readers);
+        }
+        Assert.Contains("old", seen.Keys);
+        Assert.Contains("new", seen.Keys);
+
+        async Task WaitForAsync(string expected)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (DateTime.UtcNow < deadline)
+            {
+                if (await client.GetStringAsync("/mock-proxy/demo/check", ct) == expected)
+                    return;
+                await Task.Delay(50, ct);
+            }
+            Assert.Fail("Rule update was not activated.");
+        }
+    }
+
 }

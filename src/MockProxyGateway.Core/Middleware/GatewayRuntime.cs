@@ -113,7 +113,7 @@ internal sealed partial class GatewayRuntime : IDisposable
             {
                 var escapedPrefix = context.Request.PathBase.ToUriComponent() + prefix.ToUriComponent() + "/" + alias;
                 var escapedPath = selected.Action.PathRewrite is { } rewrite
-                    ? new PathString(Uri.UnescapeDataString(rewrite)).ToUriComponent()
+                    ? rewrite
                     : GatewayPaths.GetForwardPath(rawPath, escapedPrefix, path);
                 if (!await _transport.ForwardAsync(context,
                     snapshot.Destinations[selected.Action.Destination!], escapedPath).ConfigureAwait(false))
