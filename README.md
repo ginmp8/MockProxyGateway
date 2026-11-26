@@ -4,7 +4,7 @@
 
 MockProxyGateway is a lightweight, configuration-driven service virtualization gateway for .NET 10 and ASP.NET Core. Its goal is to let developers exercise real application flows even when external HTTP dependencies are unavailable, without replacing every integration with a mock or changing business logic.
 
-> **Project status: development preview.** Follow [issue #1](https://github.com/ginmp8/MockProxyGateway/issues/1) and [draft PR #2](https://github.com/ginmp8/MockProxyGateway/pull/2). Core, the optional host, integration tests, schema and CI are implemented. [CI run 45660787011](https://github.com/ginmp8/MockProxyGateway/actions/runs/45660787011) verified 373 tests, package inspection, local-feed consumption, the pinned example and standalone Docker on its own commit. The PR checkpoint records current-HEAD acceptance. No public package has been published; this is a non-production test/integration tool.
+> **Project status: development preview.** Follow [issue #1](https://github.com/ginmp8/MockProxyGateway/issues/1) and [draft PR #2](https://github.com/ginmp8/MockProxyGateway/pull/2). Core, the optional host, integration tests, schema and CI are implemented. [CI run 45752386954](https://github.com/ginmp8/MockProxyGateway/actions/runs/45752386954) verified 708 tests, package inspection, local-feed consumption (including optional host policies), the pinned example and standalone Docker on commit `c37bbc3`. The PR checkpoint records current-HEAD acceptance. No public package has been published; this is a non-production test/integration tool.
 
 ## Why MockProxyGateway?
 

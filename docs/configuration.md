@@ -226,6 +226,14 @@ registered destination authority. Each registered destination must be trusted
 with the complete end-to-end header set. Upstreams must not treat untrusted
 forwarded metadata as authenticated identity. Explicit removeQuery can still
 remove configured query controls. No header policy settings are required or supported.
+Early gateway rejections (missing service segment, invalid target, unsupported
+protocol, and concurrency limit) emit the same redacted completion event with
+the current configuration version and correlation ID. Service, rule and action
+are fixed placeholders until resolution; raw paths, queries and headers are not
+included. Unrelated requests outside the gateway prefix are not logged by the
+gateway; unsafe original gateway targets remain gateway rejections even when
+host normalization moves their decoded path outside the prefix.
+
 The YARP logger used by this gateway is isolated; structured gateway diagnostics
 report service, rule, action, status, version, duration, correlation and failure
 category without payloads. Host HTTP logging, .NET tracing and other observability

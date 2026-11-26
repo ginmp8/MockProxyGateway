@@ -49,7 +49,7 @@ map, not a declaration that an unexecuted candidate passed.
 | Added and removed rules, concurrent readers, in-flight pin, source-equivalent reload | ConfigurationTests.AddingAndRemovingRulesKeepsConcurrentReadersOnWholeSnapshots, InFlightRequestRetainsOriginalSnapshotAcrossReload, SelectedSourcesReloadValidUpdatesAndRetainLastGood |
 | Exact expiry boundary | ConfigurationTests.ExpiryUsesHostTimeProviderAtTheExactBoundaryWithoutReload |
 | Successful short delay / cancellation of long configured delay | GatewayTests.DelayedMockReturnsConfiguredBodyAfterDelay; pinned example cancellation |
-| Synthetic local curl requests | scripts/example-scenarios.sh --verify |
+| Synthetic local curl requests | scripts/example-scenarios.sh --verify: 24 status/body checks, Retry-After and upstream header checks, client cancellation, and per-request outbound-count assertions; dynamic mutation/conflict/concurrency scenarios use the middleware integration tests above |
 
 ## AC evidence map
 
@@ -68,7 +68,7 @@ map, not a declaration that an unexecuted candidate passed.
 | AC-11 | ConfigurationTests.SelectedSourcesReloadValidUpdatesAndRetainLastGood, InFlightRequestRetainsOriginalSnapshotAcrossReload, AddingAndRemovingRulesKeepsConcurrentReadersOnWholeSnapshots, ExpiryUsesHostTimeProviderAtTheExactBoundaryWithoutReload |
 | AC-12 | ForwardingTests.RequiredInspectionFailureCannotReachDefaultProxy (including malformed Unicode and duplicate names, with explicit real-action control), InvalidUtf8InUnselectedBodyStringCannotReachDefaultProxy, FilterInspectionSelectsMockOrRealAndFailsClosedBeforeAnyAdditionalCall, FailedMutationIsNotRetriedOrReplacedWithMock |
 | AC-13 | ForwardingTests.OptionalNamedPolicyProtectsRealForwardingAndPreservesSeparateHostPolicy, DeniedDnsAddressNeverEstablishesEvenATcpConnection, UnsafeDestinationRejectedEvenWithExplicitAuthority, AllEndToEndHeadersReachSelectedUpstreamWithoutConfiguration (including distinct default/alternate loopback authorities, credential and custom headers, zero calls to unselected destinations, no-call mock, Host and protocol headers, redirects), raw-path tests, NormalizedGatewayTraversalCannotReachUnrelatedHostRoute (literal and escaped prefix, real Kestrel, unrelated prefix controls, zero outbound calls), UnapprovedAuthorityAndUnknownDestinationFailBeforeAnyRequest, InvalidRewriteCannotEscapeRegisteredDestination, RequestSuppliedUrlRemainsDataAndCannotSelectAnAuthority; ConfigurationTests.RegistrationWithoutMiddlewareIsInertEvenInProduction, MissingConfiguredPolicyDeniesGatewayWithoutAffectingHostRoutes, SymlinkFixtureOutsideTrustedRootIsRejected; GatewayTests.InvalidMockHeadersCannotActivate, ProductionActivationFailsEvenWhenAllowlisted; ConfigurationTests.ConcurrencyLimitFailsClosedAndReleasesAfterCancellation |
-| AC-14 | ForwardingTests.GatewayDiagnosticsDoNotLogUpstreamQueryOrCredentials, ConflictAndReloadDiagnosticsIdentifyRulesAndActiveVersionWithoutSensitiveValues |
+| AC-14 | ForwardingTests.GatewayDiagnosticsDoNotLogUpstreamQueryOrCredentials, ConflictAndReloadDiagnosticsIdentifyRulesAndActiveVersionWithoutSensitiveValues, EarlyGatewayRejectionIsRedactedAndNeverForwards, ConcurrencyRejectionIsRedactedAndDoesNotStartAnotherUpstreamRequest, NormalizedGatewayTraversalCannotReachUnrelatedHostRoute (redacted early rejection and unrelated-route controls) |
 | AC-15 | README, configuration.md, rules.schema.json, sample, curl and Docker scripts |
 | AC-16 | .github/workflows/ci.yml and package inspection/smoke |
 | AC-17 | Host Dockerfile and scripts/docker-smoke.sh |

@@ -232,7 +232,8 @@ public sealed class ForwardingTests
              "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
             """)!;
         rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
-        await using var gateway = await StartGatewayAsync(rules, upstream, realServer: true);
+        using var capture = new CaptureProvider();
+        await using var gateway = await StartGatewayAsync(rules, upstream, realServer: true, capture: capture);
         using var client = new HttpClient(new SocketsHttpHandler { UseProxy = false, AllowAutoRedirect = false });
         var ct = TestContext.Current.CancellationToken;
         var uri = new Uri(gateway.Urls.Single().TrimEnd('/') + target,
@@ -240,8 +241,105 @@ public sealed class ForwardingTests
         using var response = await client.GetAsync(uri, ct);
         Assert.Equal((HttpStatusCode)expected, response.StatusCode);
         if (expected == 200)
+        {
             Assert.Equal("normal", await response.Content.ReadAsStringAsync(ct));
+            Assert.DoesNotContain(capture.Messages, x => x.Message.Contains("category=invalid-target", StringComparison.Ordinal));
+        }
+        else
+        {
+            await WaitForGatewayLogAsync(capture, "category=invalid-target", "status=400", ct);
+            Assert.Contains(capture.Messages, x => x.Message.Contains("category=invalid-target", StringComparison.Ordinal) &&
+                x.Message.Contains("configuration=1", StringComparison.Ordinal) &&
+                x.Message.Contains("correlation=", StringComparison.Ordinal));
+            Assert.DoesNotContain(capture.Messages.Where(x => x.Category.StartsWith("MockProxyGateway.", StringComparison.Ordinal)),
+                x => x.Message.Contains(target, StringComparison.Ordinal));
+        }
         Assert.Empty(upstream.Requests);
+    }
+
+    [Theory]
+    [InlineData("/mock-proxy?private=synthetic-query-secret", false, 404, "missing-service")]
+    [InlineData("/mock-proxy/a/resource?private=synthetic-query-secret", true, 400, "unsupported-protocol")]
+    public async Task EarlyGatewayRejectionIsRedactedAndNeverForwards(string target, bool upgrade, int status, string category)
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        using var capture = new CaptureProvider();
+        await using var gateway = await StartGatewayAsync(rules, upstream, capture: capture);
+        using var client = gateway.GetTestClient();
+        var ct = TestContext.Current.CancellationToken;
+        using var request = new HttpRequestMessage(HttpMethod.Get, target);
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer synthetic-auth-secret");
+        request.Headers.TryAddWithoutValidation("Cookie", "test=synthetic-cookie-secret");
+        if (upgrade)
+            request.Headers.TryAddWithoutValidation("Upgrade", "websocket");
+        using var response = await client.SendAsync(request, ct);
+        Assert.Equal((HttpStatusCode)status, response.StatusCode);
+        Assert.Empty(upstream.Requests);
+        await WaitForGatewayLogAsync(capture, "category=" + category, "status=" + status.ToString(System.Globalization.CultureInfo.InvariantCulture), ct);
+        var logs = capture.Messages.Where(x => x.Category.StartsWith("MockProxyGateway.", StringComparison.Ordinal)).ToArray();
+        Assert.Contains(logs, x => x.Message.Contains("category=" + category, StringComparison.Ordinal) &&
+            x.Message.Contains("service=unknown rule=none action=none", StringComparison.Ordinal) &&
+            x.Message.Contains("configuration=1", StringComparison.Ordinal) &&
+            x.Message.Contains("durationMs=", StringComparison.Ordinal) &&
+            x.Message.Contains("correlation=", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs, x => x.Message.Contains("synthetic-", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ConcurrencyRejectionIsRedactedAndDoesNotStartAnotherUpstreamRequest()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        await using var upstream = await Upstream.StartAsync(async context =>
+        {
+            Interlocked.Increment(ref calls);
+            entered.TrySetResult();
+            await release.Task.WaitAsync(context.RequestAborted);
+            context.Response.StatusCode = 200;
+        });
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        using var capture = new CaptureProvider();
+        await using var gateway = await StartGatewayAsync(rules, upstream, capture: capture,
+            configure: options => options.MaxConcurrentRequests = 1);
+        using var client = gateway.GetTestClient();
+        var ct = TestContext.Current.CancellationToken;
+        var pending = client.GetAsync("/mock-proxy/a/hold", ct);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/mock-proxy/a/rejected?secret=synthetic-query-secret");
+            request.Headers.TryAddWithoutValidation("Authorization", "Bearer synthetic-auth-secret");
+            using var rejected = await client.SendAsync(request, ct);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, rejected.StatusCode);
+            Assert.Equal(1, Volatile.Read(ref calls));
+            await WaitForGatewayLogAsync(capture, "category=concurrency-limit", "status=503", ct);
+            Assert.Contains(capture.Messages, x => x.Message.Contains("category=concurrency-limit", StringComparison.Ordinal) &&
+                x.Message.Contains("configuration=1", StringComparison.Ordinal) &&
+                x.Message.Contains("correlation=", StringComparison.Ordinal));
+            Assert.DoesNotContain(capture.Messages.Where(x => x.Category.StartsWith("MockProxyGateway.", StringComparison.Ordinal)),
+                x => x.Message.Contains("synthetic-", StringComparison.Ordinal));
+        }
+        finally
+        {
+            release.TrySetResult();
+            using var completed = await pending;
+            Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
+        }
+        // The completion event is emitted after releasing the concurrency slot.
+        await WaitForGatewayLogAsync(capture, "category=completed", "status=200", ct);
+        using var recovered = await client.GetAsync("/mock-proxy/a/recovered", ct);
+        Assert.Equal(HttpStatusCode.OK, recovered.StatusCode);
+        Assert.Equal(2, Volatile.Read(ref calls));
     }
 
     [Fact]

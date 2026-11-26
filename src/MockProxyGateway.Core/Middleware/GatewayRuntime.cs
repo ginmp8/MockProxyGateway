@@ -34,6 +34,7 @@ internal sealed partial class GatewayRuntime : IDisposable
 
     internal async Task InvokeAsync(HttpContext context, RequestDelegate next, PathString prefix)
     {
+        var started = Stopwatch.GetTimestamp();
         var raw = context.Features.Get<IHttpRequestFeature>()?.RawTarget;
         var rawPath = raw?.Split('?', 2)[0];
         if (!context.Request.Path.StartsWithSegments(prefix, StringComparison.Ordinal, out var remaining))
@@ -49,7 +50,7 @@ internal sealed partial class GatewayRuntime : IDisposable
                  GatewayPaths.StartsWithSegment(Uri.UnescapeDataString(rawPath), decodedPrefix)) &&
                 (!GatewayPaths.IsSafe(rawPath) || !GatewayPaths.IsEscapedTargetPart(rawPath, query: false)))
             {
-                context.Response.StatusCode = 400;
+                RejectEarly(context, started, StatusCodes.Status400BadRequest, "invalid-target");
                 return;
             }
             await next(context).ConfigureAwait(false);
@@ -57,29 +58,28 @@ internal sealed partial class GatewayRuntime : IDisposable
         }
         if (!remaining.HasValue || remaining.Value == "/")
         {
-            context.Response.StatusCode = 404;
+            RejectEarly(context, started, StatusCodes.Status404NotFound, "missing-service");
             return;
         }
         if (!GatewayPaths.IsEscapedTargetPart(context.Request.QueryString.Value ?? "", query: true) ||
             !GatewayPaths.IsSafe(remaining.Value) || (!string.IsNullOrEmpty(rawPath) &&
             (!GatewayPaths.IsSafe(rawPath) || !GatewayPaths.IsEscapedTargetPart(rawPath, query: false))))
         {
-            context.Response.StatusCode = 400;
+            RejectEarly(context, started, StatusCodes.Status400BadRequest, "invalid-target");
             return;
         }
         // Tunnels and upgraded protocols are deliberately outside the HTTP v1 contract.
         if (string.Equals(context.Request.Method, "CONNECT", StringComparison.OrdinalIgnoreCase) ||
             context.Request.Headers.ContainsKey("Upgrade"))
         {
-            context.Response.StatusCode = 400;
+            RejectEarly(context, started, StatusCodes.Status400BadRequest, "unsupported-protocol");
             return;
         }
         if (!_concurrency.Wait(0))
         {
-            context.Response.StatusCode = 503;
+            RejectEarly(context, started, StatusCodes.Status503ServiceUnavailable, "concurrency-limit");
             return;
         }
-        var started = Stopwatch.GetTimestamp();
         var snapshot = _store.Current;
         var alias = "unknown";
         var ruleId = "none";
@@ -162,6 +162,20 @@ internal sealed partial class GatewayRuntime : IDisposable
                 Completed(_logger, alias, ruleId, action, context.Response.StatusCode, snapshot.Version,
                     duration, correlation, category);
             }
+        }
+    }
+
+    private void RejectEarly(HttpContext context, long started, int status, string category)
+    {
+        context.Response.StatusCode = status;
+        // No rule or service has been resolved yet. Never log the raw target,
+        // request headers or unvalidated service identifiers on rejection.
+        if (_logger.IsEnabled(LogLevel.Information))
+        {
+            var version = _store.Current.Version;
+            var correlation = Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
+            Completed(_logger, "unknown", "none", "none", status, version,
+                Stopwatch.GetElapsedTime(started).TotalMilliseconds, correlation, category);
         }
     }
 
