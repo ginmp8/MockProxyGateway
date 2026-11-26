@@ -211,13 +211,25 @@ internal static class BoundedJsonPathFilter
 
             var left = ReadOperand(path, ref _index, grouping, ref _usesRepeatedTraversal,
                 ref _maxUnionProduct, ref _hasNestedFilter, ref _hasRepeatedPredicateDescent, 0, ReadNestedPrivate);
-            if (Take(path, ref _index, "==") || Take(path, ref _index, "!=") ||
-                Take(path, ref _index, "<=") || Take(path, ref _index, ">=") ||
-                Take(path, ref _index, "<") || Take(path, ref _index, ">"))
+            var leftEnd = _index;
+            var leftContainsPrivate = nestedPrivate is not null;
+            string? comparison = null;
+            foreach (var op in new[] { "==", "!=", "<=", ">=", "<", ">" })
+            {
+                if (Take(path, ref _index, op))
+                {
+                    comparison = op;
+                    break;
+                }
+            }
+            var rightStart = _index;
+            if (comparison is not null)
             {
                 var right = ReadOperand(path, ref _index, grouping, ref _usesRepeatedTraversal,
                     ref _maxUnionProduct, ref _hasNestedFilter, ref _hasRepeatedPredicateDescent, 0, ReadNestedPrivate);
-                if (nestedPrivate is not null || !left.Comparable || !right.Comparable)
+                if (!left.Comparable || !right.Comparable)
+                    throw Invalid();
+                if (nestedPrivate is not null && !leftContainsPrivate)
                     throw Invalid();
             }
             else if (!left.Query)
@@ -230,11 +242,25 @@ internal static class BoundedJsonPathFilter
                 expression.Insert(offset - leafStart, character);
             if (nestedPrivate is not null)
             {
-                // Only relative existence queries are admitted here. The compiler
-                // rejects root references, recursion and predicate unions whenever
-                // any nested filter is present. Evaluating on the current candidate
-                // therefore preserves nested scope without changing the host registry.
-                var queryText = expression.ToString().Trim();
+                // The compiler rejects root references, recursion and predicate
+                // unions whenever any nested filter is present. Evaluate the
+                // isolated relative query on the current candidate.
+                var queryText = comparison is null ? expression.ToString().Trim() : path[leafStart..leftEnd].Trim();
+                string? function = null;
+                JsonElement expected = default;
+                if (comparison is not null)
+                {
+                    var open = queryText.IndexOf('(');
+                    if (open < 0 || !queryText.EndsWith(')'))
+                        throw Invalid();
+                    function = queryText[..open].Trim();
+                    if (function is not ("count" or "value"))
+                        throw Invalid();
+                    queryText = queryText[(open + 1)..^1].Trim();
+                    expected = ReadComparisonLiteral(path[rightStart.._index].Trim());
+                    if (function == "count" && expected.ValueKind != JsonValueKind.Number)
+                        throw Invalid();
+                }
                 if (queryText[0] != '@' ||
                     !JsonPath.TryParse("$" + queryText[1..], out var query) ||
                     query.Segments.Length > 16)
@@ -252,6 +278,21 @@ internal static class BoundedJsonPathFilter
                 }
                 if (replaced != 1)
                     throw Invalid();
+                if (function == "count")
+                {
+                    var number = RuleCompiler.Number(expected);
+                    return (_, candidate) => CompareOrder(((decimal)query.Evaluate(candidate).Matches.Count).CompareTo(number), comparison!);
+                }
+                if (function == "value")
+                {
+                    return (_, candidate) =>
+                    {
+                        var matches = query.Evaluate(candidate).Matches;
+                        return matches.Count == 1
+                            ? CompareValue(matches[0].Value, expected, comparison!)
+                            : comparison == "!=";
+                    };
+                }
                 return (_, candidate) => query.Evaluate(candidate).Matches.Count != 0;
             }
 
@@ -261,6 +302,59 @@ internal static class BoundedJsonPathFilter
             return filter.Expression.Evaluate;
         }
     }
+
+    private static JsonElement ReadComparisonLiteral(string text)
+    {
+        if (text.Length == 0)
+            throw Invalid();
+        if (text[0] is '\'' or '"')
+        {
+            if (!JsonPath.TryParse("$[" + text + "]", out var literal) ||
+                literal.Segments[0].Selectors[0] is not NameSelector name)
+                throw Invalid();
+            return JsonSerializer.SerializeToElement(name.Name);
+        }
+        if (!char.IsAsciiDigit(text[0]) && text[0] != '-' && text is not ("true" or "false" or "null"))
+            throw Invalid();
+        using var document = JsonDocument.Parse(text);
+        return document.RootElement.Clone();
+    }
+
+    private static bool CompareValue(JsonNode? value, JsonElement expected, string comparison)
+    {
+        // A selected JSON null is a value; zero or multiple selected nodes
+        // are Nothing (handled by the caller). A container cannot equal a scalar.
+        if (value is JsonObject or JsonArray)
+            return comparison == "!=";
+        var actual = JsonSerializer.SerializeToElement(value);
+        var equal = JsonElement.DeepEquals(actual, expected);
+        if (equal)
+            return CompareOrder(0, comparison);
+        if (comparison is "==" or "!=")
+            return comparison == "!=";
+        if (actual.ValueKind == JsonValueKind.Number && expected.ValueKind == JsonValueKind.Number)
+            return CompareOrder(RuleCompiler.Number(actual).CompareTo(RuleCompiler.Number(expected)), comparison);
+        if (actual.ValueKind == JsonValueKind.String && expected.ValueKind == JsonValueKind.String)
+        {
+            // UTF-8 lexicographic order is Unicode scalar order, unlike UTF-16
+            // ordinal order for supplementary characters.
+            var a = Encoding.UTF8.GetBytes(actual.GetString()!);
+            var b = Encoding.UTF8.GetBytes(expected.GetString()!);
+            return CompareOrder(a.AsSpan().SequenceCompareTo(b), comparison);
+        }
+        return false;
+    }
+
+    private static bool CompareOrder(int order, string comparison) => comparison switch
+    {
+        "==" => order == 0,
+        "!=" => order != 0,
+        "<" => order < 0,
+        ">" => order > 0,
+        "<=" => order <= 0,
+        ">=" => order >= 0,
+        _ => throw Invalid()
+    };
 
     // The locked length() counts graphemes instead of Unicode scalars. Admit
     // a singular-query or string-literal comparison with a private predicate,

@@ -148,7 +148,7 @@ selector: string length counts Unicode scalar values, object/array length
 counts members, and unsupported or missing values produce Nothing. The
 [pinned upstream length implementation](https://github.com/json-everything/json-everything/blob/f53d4d27eeed6a73d377bf4188175f0b8a46f856/src/JsonPath/LengthFunction.cs)
 counts graphemes, so the gateway does not evaluate that function or modify
-the process-global registry. The same traversal/byte budgets apply. Logical combinations with ordinary predicates and the other private functions are supported in outer filters and one nested relative existence query. String literals are decoded and counted once during compilation. Other length argument forms and private nested predicates inside count/value remain rejected.
+the process-global registry. The same traversal/byte budgets apply. Logical combinations with ordinary predicates and the other private functions are supported in outer filters and one nested relative existence query. String literals are decoded and counted once during compilation. Other length argument forms remain rejected. A single nested private relative filter may also be used as the left `count()` or `value()` operand compared with a literal. Count requires a numeric literal; value supports typed scalar literals, with zero or multiple nodes treated as Nothing.
 `match(@.name, 'test-.*')` and `search(@.name, '[A-Z]+')` use private
 selectors with constant I-Regexp patterns and singular relative/root queries.
 Supported patterns: Unicode literals (including literal ^ and $), scalar dot
@@ -160,7 +160,7 @@ I-Regexp Boolean semantics; group depth is limited to eight. Classes have at mos
 the entire string; search looks for a substring. Missing and non-string values
 do not match. The nonbacktracking engine has a 25 ms timeout and candidate
 visits are reserved from the shared 64-evaluation budget before evaluation.
-Outer descent with regex remains unsupported. A single nested relative existence query such as `$.items[?@.nested[?match(@.name, 'x')]]` uses an isolated compiled query against the outer candidate; root references, predicate unions, descent, deeper nesting and private nested predicates inside count/value remain rejected. Outer compound predicates are limited to 16 leaves and eight logical nesting levels; AND, OR and NOT preserve precedence and short-circuit evaluation. Reserve potential visits for every regex leaf before evaluation, even if skipped by short circuit.
+Outer descent with regex remains unsupported. A single nested relative existence query such as `$.items[?@.nested[?match(@.name, 'x')]]` uses an isolated compiled query against the outer candidate; root references, predicate unions, descent and deeper nesting remain rejected. Nested private count/value comparisons use the same isolated query and shared budgets; dynamic or query-valued comparison operands remain unsupported. Outer compound predicates are limited to 16 leaves and eight logical nesting levels; AND, OR and NOT preserve precedence and short-circuit evaluation. Reserve potential visits for every regex leaf before evaluation, even if skipped by short circuit.
 The request budget is charged before evaluation for body nodes multiplied by
 the union product; when descent is present, the charge also accounts for
 descendant traversal and every subsequent segment. Filters conservatively

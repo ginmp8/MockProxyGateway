@@ -762,6 +762,12 @@ public sealed class ForwardingTests
     [InlineData("$.items[?@.nested[?search(@.name, 'z')]]", false, 201, 1)]
     [InlineData("$.items[?@.nested[?match(@.name, '..')]]", true, 400, 0)]
     [InlineData("$.items[?@.nested[?@.name || match(@.name, '..')]]", true, 400, 0)]
+    [InlineData("$.items[?count(@.nested[?match(@.name, '..')]) == 1]", false, 202, 0)]
+    [InlineData("$.items[?count(@.nested[?length(@.name) == 1]) > 0]", false, 201, 1)]
+    [InlineData("$.items[?value(@.nested[?length(@.name) == 2].name) == 'é']", false, 202, 0)]
+    [InlineData("$.items[?value(@.nested[?match(@.name, '..')].name) == 'other']", false, 201, 1)]
+    [InlineData("$.items[?count(@.nested[?match(@.name, '..')]) >= 1]", true, 400, 0)]
+    [InlineData("$.items[?value(@.nested[?match(@.name, '..')].name) == 'é']", true, 400, 0)]
     public async Task NestedPrivateFilterUsesCandidateScopeAndFailsClosed(string selector, bool large, int status, int calls)
     {
         Assert.True(Json.Path.FunctionRepository.TryGet("length", out var length));
