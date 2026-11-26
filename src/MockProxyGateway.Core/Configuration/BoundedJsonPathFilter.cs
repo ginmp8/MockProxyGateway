@@ -251,6 +251,7 @@ internal static class BoundedJsonPathFilter
                 string? function = null;
                 JsonElement expected = default;
                 JsonPath? expectedQuery = null;
+                string? expectedFunction = null;
                 if (comparison is not null)
                 {
                     var open = queryText.IndexOf('(');
@@ -261,10 +262,27 @@ internal static class BoundedJsonPathFilter
                         throw Invalid();
                     queryText = queryText[(open + 1)..^1].Trim();
                     var rightText = leftContainsPrivate ? path[rightStart.._index].Trim() : path[leafStart..leftEnd].Trim();
+                    // ReadOperand has already admitted both operands under the same
+                    // relative-query and traversal limits. Only count/value may
+                    // consume a non-singular query on the other side.
+                    if (rightText.StartsWith("count", StringComparison.Ordinal) ||
+                        rightText.StartsWith("value", StringComparison.Ordinal))
+                    {
+                        var otherOpen = rightText.IndexOf('(');
+                        if (otherOpen < 0 || !rightText.EndsWith(')'))
+                            throw Invalid();
+                        expectedFunction = rightText[..otherOpen].Trim();
+                        if (expectedFunction is not ("count" or "value"))
+                            throw Invalid();
+                        rightText = rightText[(otherOpen + 1)..^1].Trim();
+                        if (!rightText.StartsWith('@'))
+                            throw Invalid();
+                    }
                     if (rightText.StartsWith('@'))
                     {
                         if (!JsonPath.TryParse("$" + rightText[1..], out expectedQuery) ||
-                            !expectedQuery.IsSingular || expectedQuery.Segments.Length > 16)
+                            (expectedFunction is null && !expectedQuery.IsSingular) ||
+                            expectedQuery.Segments.Length > 16)
                             throw Invalid();
                     }
                     else
@@ -289,21 +307,13 @@ internal static class BoundedJsonPathFilter
                 }
                 if (replaced != 1)
                     throw Invalid();
-                if (function == "count")
+                if (function is not null)
                 {
                     return (_, candidate) =>
                     {
-                        var actual = JsonSerializer.SerializeToElement(query.Evaluate(candidate).Matches.Count);
-                        var operand = expectedQuery is null ? expected : SelectedValue(expectedQuery, candidate);
-                        return leftContainsPrivate ? CompareValue(actual, operand, comparison!) : CompareValue(operand, actual, comparison!);
-                    };
-                }
-                if (function == "value")
-                {
-                    return (_, candidate) =>
-                    {
-                        var actual = SelectedValue(query, candidate);
-                        var operand = expectedQuery is null ? expected : SelectedValue(expectedQuery, candidate);
+                        var actual = EvaluateComparisonQuery(query, function, candidate);
+                        var operand = expectedQuery is null ? expected :
+                            EvaluateComparisonQuery(expectedQuery, expectedFunction, candidate);
                         return leftContainsPrivate ? CompareValue(actual, operand, comparison!) : CompareValue(operand, actual, comparison!);
                     };
                 }
@@ -333,6 +343,10 @@ internal static class BoundedJsonPathFilter
         using var document = JsonDocument.Parse(text);
         return document.RootElement.Clone();
     }
+
+    private static JsonElement EvaluateComparisonQuery(JsonPath query, string? function, JsonNode? candidate) =>
+        function == "count" ? JsonSerializer.SerializeToElement(query.Evaluate(candidate).Matches.Count) :
+            SelectedValue(query, candidate);
 
     private static JsonElement SelectedValue(JsonPath query, JsonNode? candidate)
     {
