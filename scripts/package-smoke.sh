@@ -71,4 +71,37 @@ test "$(curl -fsS http://127.0.0.1:5182/api/health)" = normal
 test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:5182/mock-proxy/demo/health)" = 404
 test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:5182/configured-prefix/demo/health)" = 404
 test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:5182/integration-gateway-other/demo/health)" = 404
-echo "Package-only embedded mock and proxy smoke passed."
+kill "$host_pid"
+wait "$host_pid" || true
+host_pid=""
+# Only this temporary package consumer registers host-owned synthetic policies.
+# No authentication scheme or request-controlled identity is introduced.
+python3 - Program.cs <<'PY'
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+source = path.read_text()
+old = "builder.Services.AddMockProxyGateway();"
+assert source.count(old) == 1
+path.write_text(source.replace(old, """builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("smoke-allow", policy => policy.RequireAssertion(_ => true));
+    options.AddPolicy("smoke-deny", policy => policy.RequireAssertion(_ => false));
+});
+builder.Services.AddMockProxyGateway();"""))
+PY
+dotnet build EmbeddedHost.csproj -c Release --no-restore
+start_host MockProxyGateway__AuthorizationPolicy=smoke-deny
+before="$(grep -c '"GET /ping.txt HTTP/' "$work/upstream.log" || true)"
+denied="$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:5182/integration-gateway/demo/ping.txt)"
+test "$denied" = 401 || test "$denied" = 403
+test "$(curl -fsS http://127.0.0.1:5182/api/health)" = normal
+test "$(grep -c '"GET /ping.txt HTTP/' "$work/upstream.log" || true)" = "$before"
+kill "$host_pid"
+wait "$host_pid" || true
+host_pid=""
+start_host MockProxyGateway__AuthorizationPolicy=smoke-allow
+test "$(curl -fsS http://127.0.0.1:5182/integration-gateway/demo/ping.txt)" = local-upstream
+test "$(curl -fsS http://127.0.0.1:5182/integration-gateway/demo/health)" = mock-health
+test "$(curl -fsS http://127.0.0.1:5182/api/health)" = normal
+echo "Package-only embedded mock, proxy and optional host policy smoke passed."

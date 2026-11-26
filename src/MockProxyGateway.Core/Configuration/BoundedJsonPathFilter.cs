@@ -229,8 +229,6 @@ internal static class BoundedJsonPathFilter
                     ref _maxUnionProduct, ref _hasNestedFilter, ref _hasRepeatedPredicateDescent, 0, ReadNestedPrivate);
                 if (!left.Comparable || !right.Comparable)
                     throw Invalid();
-                if (nestedPrivate is not null && !leftContainsPrivate)
-                    throw Invalid();
             }
             else if (!left.Query)
                 throw Invalid();
@@ -245,7 +243,8 @@ internal static class BoundedJsonPathFilter
                 // The compiler rejects root references, recursion and predicate
                 // unions whenever any nested filter is present. Evaluate the
                 // isolated relative query on the current candidate.
-                var queryText = comparison is null ? expression.ToString().Trim() : path[leafStart..leftEnd].Trim();
+                var queryText = comparison is null ? expression.ToString().Trim()
+                    : leftContainsPrivate ? path[leafStart..leftEnd].Trim() : path[rightStart.._index].Trim();
                 string? function = null;
                 JsonElement expected = default;
                 JsonPath? expectedQuery = null;
@@ -258,7 +257,7 @@ internal static class BoundedJsonPathFilter
                     if (function is not ("count" or "value"))
                         throw Invalid();
                     queryText = queryText[(open + 1)..^1].Trim();
-                    var rightText = path[rightStart.._index].Trim();
+                    var rightText = leftContainsPrivate ? path[rightStart.._index].Trim() : path[leafStart..leftEnd].Trim();
                     if (rightText.StartsWith('@'))
                     {
                         if (!JsonPath.TryParse("$" + rightText[1..], out expectedQuery) ||
@@ -295,7 +294,7 @@ internal static class BoundedJsonPathFilter
                     {
                         var actual = JsonSerializer.SerializeToElement(query.Evaluate(candidate).Matches.Count);
                         var operand = expectedQuery is null ? expected : SelectedValue(expectedQuery, candidate);
-                        return CompareValue(actual, operand, comparison!);
+                        return leftContainsPrivate ? CompareValue(actual, operand, comparison!) : CompareValue(operand, actual, comparison!);
                     };
                 }
                 if (function == "value")
@@ -304,7 +303,7 @@ internal static class BoundedJsonPathFilter
                     {
                         var actual = SelectedValue(query, candidate);
                         var operand = expectedQuery is null ? expected : SelectedValue(expectedQuery, candidate);
-                        return CompareValue(actual, operand, comparison!);
+                        return leftContainsPrivate ? CompareValue(actual, operand, comparison!) : CompareValue(operand, actual, comparison!);
                     };
                 }
                 return (_, candidate) => query.Evaluate(candidate).Matches.Count != 0;
