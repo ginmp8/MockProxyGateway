@@ -833,6 +833,54 @@ public sealed class ForwardingTests
         Assert.Equal(payload, Assert.Single(upstream.Requests).Body);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HostBodyLimitRejectionCannotReachDefaultProxy(bool chunked)
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"body","priority":1,"conditions":{"source":"body","key":"$.selected","operator":"equals","value":true},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        using var capture = new CaptureProvider();
+        await using var gateway = await StartGatewayAsync(rules, upstream, realServer: true,
+            capture: capture, hostBodyLimit: 64);
+        var ct = TestContext.Current.CancellationToken;
+        var address = new Uri(gateway.Urls.Single());
+        var payload = "{\"selected\":false,\"padding\":\"" + new string('x', 128) + "\"}";
+        var framing = chunked
+            ? "Transfer-Encoding: chunked\r\n"
+            : $"Content-Length: {payload.Length}\r\n";
+        var body = chunked
+            ? $"{payload.Length:X}\r\n{payload}\r\n0\r\n\r\n"
+            : payload;
+        using (var tcp = new System.Net.Sockets.TcpClient())
+        {
+            await tcp.ConnectAsync(address.Host, address.Port, ct);
+            using var wire = tcp.GetStream();
+            var message = "POST /mock-proxy/a/check HTTP/1.1\r\nHost: localhost\r\n" +
+                "Content-Type: application/json\r\nConnection: close\r\n" + framing + "\r\n" + body;
+            await wire.WriteAsync(Encoding.ASCII.GetBytes(message), ct);
+            using var reader = new StreamReader(wire, Encoding.ASCII);
+            var status = await reader.ReadLineAsync(ct).AsTask().WaitAsync(TimeSpan.FromSeconds(5), ct);
+            Assert.StartsWith("HTTP/1.1 413 ", status, StringComparison.Ordinal);
+        }
+        Assert.Empty(upstream.Requests);
+        await WaitForGatewayLogAsync(capture, "category=body-size", "status=413", ct);
+
+        // A valid smaller body still follows the ordinary matching and proxy path.
+        using var client = new HttpClient { BaseAddress = address };
+        using var small = new StringContent("{\"selected\":false}", Encoding.UTF8, "application/json");
+        using var forwarded = await client.PostAsync("/mock-proxy/a/check", small, ct);
+        Assert.Equal(HttpStatusCode.Created, forwarded.StatusCode);
+        Assert.Equal("{\"selected\":false}", Assert.Single(upstream.Requests).Body);
+    }
+
     [Fact]
     public async Task InvalidUtf8InUnselectedBodyStringCannotReachDefaultProxy()
     {
@@ -1535,7 +1583,8 @@ public sealed class ForwardingTests
     }
 
     private static async Task<WebApplication> StartGatewayAsync(JsonNode json, Upstream upstream, bool realServer = false,
-        Func<System.Text.Json.JsonElement>? provider = null, ILoggerProvider? capture = null, Action<GatewayOptions>? configure = null)
+        Func<System.Text.Json.JsonElement>? provider = null, ILoggerProvider? capture = null, Action<GatewayOptions>? configure = null,
+        long? hostBodyLimit = null)
     {
         var builder = TestHosting.CreateBuilder();
         if (capture is not null)
@@ -1544,7 +1593,11 @@ public sealed class ForwardingTests
             builder.Logging.SetMinimumLevel(LogLevel.Information);
         }
         if (realServer)
+        {
             builder.WebHost.UseKestrel().UseUrls("http://127.0.0.1:0");
+            if (hostBodyLimit.HasValue)
+                builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = hostBodyLimit.Value);
+        }
         else
             builder.WebHost.UseTestServer();
         builder.Services.AddMockProxyGateway(options =>

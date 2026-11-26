@@ -241,6 +241,14 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
             }
             _bodyLoaded = true;
         }
+        catch (BadHttpRequestException ex) when (ex.StatusCode is >= 400 and < 500)
+        {
+            // A stricter host limit or invalid HTTP framing can fail on the first
+            // body read. Preserve the sanitized client status rather than turning
+            // this IOException into a generic gateway action error (500).
+            throw new RequestFailure(ex.StatusCode, ex.StatusCode == StatusCodes.Status413PayloadTooLarge
+                ? "body-size" : "body-transport");
+        }
         catch (Exception ex) when (ex is JsonException or ArgumentException)
         {
             throw new RequestFailure(400, "body-json");
