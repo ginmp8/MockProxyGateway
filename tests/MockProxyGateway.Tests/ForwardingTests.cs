@@ -1030,6 +1030,85 @@ public sealed class ForwardingTests
     }
 
     [Theory]
+    [InlineData("cookie", "synthetic-malformed-cookie", "cookie-syntax")]
+    [InlineData("cookie", "other=synthetic; malformed", "cookie-syntax")]
+    [InlineData("contentType", "synthetic invalid media type", "content-type-syntax")]
+    public async Task MalformedRequiredHeaderInspectionCannotReachDefaultProxy(
+        string source, string malformed, string category)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var upstream = await Upstream.StartAsync();
+        using var capture = new CaptureProvider();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},
+              "rules":[{"id":"selected","priority":10,"conditions":{"source":"cookie","key":"scenario","operator":"equals","value":"selected"},
+                "action":{"mode":"mock","response":{"statusCode":200,"text":"selected"}}}]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        var condition = rules["services"]!["a"]!["rules"]![0]!["conditions"]!.AsObject();
+        if (source == "contentType")
+        {
+            condition.Remove("key");
+            condition["source"] = source;
+            condition["value"] = "application/json";
+        }
+
+        await using var gateway = await StartGatewayAsync(rules, upstream, capture: capture);
+        using var client = gateway.GetTestClient();
+
+        using (var invalid = Request(malformed))
+        using (var response = await client.SendAsync(invalid, ct))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Empty(await response.Content.ReadAsByteArrayAsync(ct));
+        }
+        Assert.Empty(upstream.Requests);
+        await WaitForGatewayLogAsync(capture, "status=400", "category=" + category, ct);
+        Assert.DoesNotContain(capture.Messages, x =>
+            x.Category.Contains("MockProxyGateway", StringComparison.Ordinal) &&
+            x.Message.Contains(malformed, StringComparison.Ordinal));
+
+        using (var matching = Request(source == "cookie" ? "scenario=selected; other=synthetic" : "application/json; charset=utf-8"))
+        using (var mock = await client.SendAsync(matching, ct))
+        {
+            Assert.Equal(HttpStatusCode.OK, mock.StatusCode);
+            Assert.Equal("selected", await mock.Content.ReadAsStringAsync(ct));
+        }
+        Assert.Empty(upstream.Requests);
+
+        var unmatched = source == "cookie" ? "scenario=other" : "text/plain; charset=utf-8";
+        using (var valid = Request(unmatched))
+        using (var proxy = await client.SendAsync(valid, ct))
+        {
+            Assert.Equal(HttpStatusCode.Created, proxy.StatusCode);
+            Assert.Equal("upstream", await proxy.Content.ReadAsStringAsync(ct));
+        }
+        var forwarded = Assert.Single(upstream.Requests);
+        Assert.Equal(unmatched, forwarded.Headers[source == "cookie" ? "Cookie" : "Content-Type"]);
+
+        using var absent = Request(null);
+        using var defaultProxy = await client.SendAsync(absent, ct);
+        Assert.Equal(HttpStatusCode.Created, defaultProxy.StatusCode);
+        Assert.Equal(2, upstream.Requests.Count);
+
+        HttpRequestMessage Request(string? headerValue)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "/mock-proxy/a/check");
+            if (headerValue is null)
+                return request;
+            if (source == "cookie")
+                request.Headers.TryAddWithoutValidation("Cookie", headerValue);
+            else
+            {
+                request.Content = new ByteArrayContent([]);
+                request.Content.Headers.TryAddWithoutValidation("Content-Type", headerValue);
+            }
+            return request;
+        }
+    }
+
+    [Theory]
     [InlineData("{", "application/json", 400)]
     [InlineData("not-json", "text/plain", 415)]
     [InlineData("{\"customer\":{\"riskScore\":10},\"unselected\":\"\\ud800\"}", "application/json", 400)]

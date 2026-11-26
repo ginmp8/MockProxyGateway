@@ -175,9 +175,18 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
             case "cookie":
                 // IRequestCookieCollection collapses names using OrdinalIgnoreCase.
                 // Parse the wire header without modifying it or losing repeated/case-distinct names.
-                strings = CookieHeaderValue.ParseList(request.Headers.Cookie.Select(x => x ?? "").ToArray())
-                    .Where(x => string.Equals(x.Name.Value, condition.Key, StringComparison.Ordinal))
-                    .Select(x => Uri.UnescapeDataString(x.Value.Value ?? "")).ToArray();
+                // The permissive parser silently skips invalid values. A required
+                // inspection failure must not become a no-match and select proxy.
+                try
+                {
+                    strings = CookieHeaderValue.ParseStrictList(request.Headers.Cookie.Select(x => x ?? "").ToArray())
+                        .Where(x => string.Equals(x.Name.Value, condition.Key, StringComparison.Ordinal))
+                        .Select(x => Uri.UnescapeDataString(x.Value.Value ?? "")).ToArray();
+                }
+                catch (FormatException)
+                {
+                    throw new RequestFailure(400, "cookie-syntax");
+                }
                 break;
             case "route":
                 strings = route.TryGetValue(condition.Key!, out var captured) ? [captured] : [];
@@ -189,7 +198,12 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                 strings = [path];
                 break;
             case "contentType":
-                strings = MediaTypeHeaderValue.TryParse(request.ContentType, out var type) ? [type.MediaType.Value!] : [];
+                if (request.ContentType is null)
+                    strings = [];
+                else if (MediaTypeHeaderValue.TryParse(request.ContentType, out var type))
+                    strings = [type.MediaType.Value!];
+                else
+                    throw new RequestFailure(400, "content-type-syntax");
                 break;
             default:
                 throw new RequestFailure(500);

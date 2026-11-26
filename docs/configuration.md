@@ -95,7 +95,11 @@ with seconds and an explicit Z or +00:00 offset (parsed by System.Text.Json).
 Header names and query keys compare case-insensitively; cookie, route and JSON property
 names use ordinal case-sensitive comparison. Cookie matching reads the original
 Cookie header with the framework parser, preserving case-distinct and repeated
-names; values are percent-decoded for matching only. Proxy headers are unchanged.
+names; values are percent-decoded for matching only. Required cookie inspection rejects
+malformed cookie syntax with a sanitized 400 instead of treating it as a missing value.
+A required content-type selector likewise rejects a malformed present Content-Type with
+400; an absent header remains missing. Body inspection retains its own 415 contract.
+These checks are lazy rule evaluation, not a proxy header filter. Proxy headers are unchanged.
 Method and content type compare
 case-insensitively, including the regex operator; content-type parameters are excluded. Path matching uses the
 decoded path with case-sensitive segments; a trailing slash is equivalent for rule
