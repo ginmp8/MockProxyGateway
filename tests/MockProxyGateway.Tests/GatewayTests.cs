@@ -301,6 +301,9 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?match(@.name, 'x')] && @.other[?@.flag]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$..items[?@.nested[?match(@.name, 'x')]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?match(@.name, 'x')][0,0]]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"method\",\"key\":null,\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.value\",\"operator\":\"equals\",\"value\":42,\"quantifier\":null}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.value\",\"operator\":\"jsonEquals\",\"value\":{\"nested\":[\"\\ud800\"]}}")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """

@@ -65,6 +65,11 @@ There is no cross-replica synchronization or administrative write endpoint.
 See [the JSON Schema](rules.schema.json) and [complete example](../examples/mock-proxy-gateway.json).
 The runtime additionally validates typed operands, numeric precision, duplicate
 identifiers, resource limits, destination permissions, and fixture paths.
+All strings in the rule document, including nested operands and raw mock bodies,
+must decode as valid Unicode. Explicit JSON null is preserved in body values
+and typed operands; optional string metadata such as quantifier and pathRewrite
+must be omitted rather than set to null. Expiry uses an ISO 8601 UTC timestamp
+with seconds and an explicit Z or +00:00 offset (parsed by System.Text.Json).
 
 | Object | Fields |
 | --- | --- |

@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -23,7 +22,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
     {
         using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 64 });
         var root = document.RootElement;
-        CheckDuplicates(root);
+        ValidateJsonTree(root);
         Only(root, "schemaVersion", "destinations", "services");
         if (root.GetProperty("schemaVersion").GetInt32() != 1)
             throw Invalid("Unsupported schema version.");
@@ -83,9 +82,9 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             if (item.TryGetProperty("expiresAt", out var expiry))
             {
                 var value = expiry.GetString();
-                if (value is null || (!value.EndsWith('Z') && !value.EndsWith("+00:00", StringComparison.Ordinal)) ||
-                    !DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var time) ||
-                    time.Offset != TimeSpan.Zero)
+                if (value is null || value.Length < 20 || value[10] != 'T' || value[16] != ':' ||
+                    (!value.EndsWith('Z') && !value.EndsWith("+00:00", StringComparison.Ordinal)) ||
+                    !expiry.TryGetDateTimeOffset(out var time) || time.Offset != TimeSpan.Zero)
                     throw Invalid("Expiry must be a UTC timestamp.");
                 expires = time;
             }
@@ -375,7 +374,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
         return bytes;
     }
 
-    internal static void CheckDuplicates(JsonElement element)
+    internal static void ValidateJsonTree(JsonElement element)
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
@@ -384,12 +383,19 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             {
                 if (!seen.Add(property.Name))
                     throw Invalid("Duplicate JSON property.");
-                CheckDuplicates(property.Value);
+                ValidateJsonTree(property.Value);
             }
         }
         else if (element.ValueKind == JsonValueKind.Array)
             foreach (var value in element.EnumerateArray())
-                CheckDuplicates(value);
+                ValidateJsonTree(value);
+        else if (element.ValueKind == JsonValueKind.String)
+        {
+            // JsonDocument may defer Unicode decoding until a string is read.
+            // Validate even nested operands and raw mock response bodies before
+            // publishing the snapshot, without changing their original JSON.
+            _ = element.GetString();
+        }
     }
 
     private static JsonElement[] Items(JsonElement parent, string key) =>
@@ -397,7 +403,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
     private static string[] Strings(JsonElement parent, string key) =>
         Items(parent, key).Select(x => x.GetString() ?? throw Invalid("Invalid string array.")).ToArray();
     private static string Text(JsonElement parent, string key) => parent.GetProperty(key).GetString() ?? throw Invalid("Required string missing.");
-    private static string? OptionalText(JsonElement parent, string key) => parent.TryGetProperty(key, out var value) ? value.GetString() : null;
+    private static string? OptionalText(JsonElement parent, string key) => parent.TryGetProperty(key, out _) ? Text(parent, key) : null;
     private static bool Bool(JsonElement parent, string key, bool fallback) => parent.TryGetProperty(key, out var value) ? value.GetBoolean() : fallback;
     private static void Id(string value)
     {

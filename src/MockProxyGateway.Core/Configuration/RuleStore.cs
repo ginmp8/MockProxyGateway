@@ -137,7 +137,7 @@ internal sealed partial class RuleStore : IAsyncDisposable
             AllowTrailingCommas = true,
             MaxDepth = 64
         });
-        RuleCompiler.CheckDuplicates(document.RootElement);
+        RuleCompiler.ValidateJsonTree(document.RootElement);
         var gateway = FindProperty(document.RootElement, "MockProxyGateway");
         var rules = FindProperty(gateway, "Rules");
         return Encoding.UTF8.GetBytes(rules.GetRawText());

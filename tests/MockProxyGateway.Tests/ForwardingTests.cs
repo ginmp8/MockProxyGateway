@@ -459,6 +459,57 @@ public sealed class ForwardingTests
         }
     }
 
+    [Theory]
+    [InlineData("2030-01-01T00:00:00Z", "\"\\ud800\"", "\"any\"")]
+    [InlineData("2030-01-01T00:00:00Z", "\"\\udc00\"", "\"any\"")]
+    [InlineData("2030-01-01T00:00:00Z", "null", "null")]
+    [InlineData("01/01/2030 00:00:00Z", "null", "\"any\"")]
+    [InlineData("2030-01-01T00:00Z", "null", "\"any\"")]
+    public async Task InvalidTypedRuleReloadRetainsLastGoodAndAcceptsCorrectedDocument(
+        string expiry, string payload, string quantifier)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var upstream = await Upstream.StartAsync();
+        using var capture = new CaptureProvider();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        var published = rules.ToJsonString();
+        await using var gateway = await StartGatewayAsync(rules, upstream,
+            provider: () => System.Text.Json.JsonElement.Parse(Volatile.Read(ref published)), capture: capture);
+        using var client = gateway.GetTestClient();
+        const string candidate = """
+            {"schemaVersion":1,"destinations":{},"services":{"a":{
+              "default":{"mode":"mock","response":{"statusCode":200,"body":{"nested":[PAYLOAD,null]}}},
+              "rules":[{"id":"temporary","priority":10,"expiresAt":"EXPIRY",
+                "conditions":{"source":"header","key":"X-Scenario","operator":"equals","value":"synthetic","quantifier":QUANTIFIER},
+                "action":{"mode":"mock","response":{"statusCode":201}}}]}}}
+            """;
+        Volatile.Write(ref published, candidate.Replace("EXPIRY", expiry, StringComparison.Ordinal)
+            .Replace("PAYLOAD", payload, StringComparison.Ordinal)
+            .Replace("QUANTIFIER", quantifier, StringComparison.Ordinal));
+        await WaitForGatewayLogAsync(capture, "Gateway configuration reload rejected; retaining version 1.", "", ct);
+        using (var retained = await client.GetAsync("/mock-proxy/a/check", ct))
+        {
+            Assert.Equal(HttpStatusCode.Created, retained.StatusCode);
+            Assert.Equal("upstream", await retained.Content.ReadAsStringAsync(ct));
+        }
+        Assert.Single(upstream.Requests);
+
+        Volatile.Write(ref published, candidate.Replace("EXPIRY", "2030-01-01T00:00:00+00:00", StringComparison.Ordinal)
+            .Replace("PAYLOAD", "\"\\ud83d\\ude00\"", StringComparison.Ordinal)
+            .Replace("QUANTIFIER", "\"any\"", StringComparison.Ordinal));
+        await WaitForGatewayLogAsync(capture, "Gateway configuration version 2 activated.", "", ct);
+        using var corrected = await client.GetAsync("/mock-proxy/a/check", ct);
+        Assert.Equal(HttpStatusCode.OK, corrected.StatusCode);
+        using var body = System.Text.Json.JsonDocument.Parse(await corrected.Content.ReadAsStringAsync(ct));
+        Assert.Equal("\U0001F600", body.RootElement.GetProperty("nested")[0].GetString());
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, body.RootElement.GetProperty("nested")[1].ValueKind);
+        Assert.Single(upstream.Requests);
+    }
+
     [Fact]
     public async Task MissingFixtureReloadRecoversWithoutAnotherRuleEdit()
     {

@@ -481,17 +481,20 @@ public sealed class ConfigurationTests
         Assert.Throws<InvalidOperationException>(() => app.UseMockProxyGateway());
     }
 
-    [Fact]
-    public async Task ExpiryUsesHostTimeProviderAtTheExactBoundaryWithoutReload()
+    [Theory]
+    [InlineData("2030-01-01T00:00:00Z")]
+    [InlineData("2030-01-01T00:00:00+00:00")]
+    [InlineData("2030-01-01T00:00:00.0000000Z")]
+    public async Task ExpiryUsesHostTimeProviderAtTheExactBoundaryWithoutReload(string expiry)
     {
         var boundary = new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var clock = new ManualClock(boundary.AddSeconds(-1));
-        const string rules = """
+        var rules = """
             {"schemaVersion":1,"destinations":{},"services":{"demo":{"default":{"mode":"mock","response":{"statusCode":200,"text":"default"}},
-              "rules":[{"id":"temporary","priority":10,"expiresAt":"2030-01-01T00:00:00Z",
+              "rules":[{"id":"temporary","priority":10,"expiresAt":"EXPIRY",
                "conditions":{"source":"header","key":"X-Scenario","operator":"exists"},
                "action":{"mode":"mock","response":{"statusCode":201,"text":"temporary"}}}]}}}
-            """;
+            """.Replace("EXPIRY", expiry, StringComparison.Ordinal);
         var builder = TestHosting.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Services.AddSingleton<TimeProvider>(clock);
