@@ -169,7 +169,12 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                 strings = request.Headers.TryGetValue(condition.Key!, out var headers) ? headers.Select(x => x ?? "").ToArray() : [];
                 break;
             case "query":
-                strings = request.Query.Where(x => string.Equals(x.Key, condition.Key, StringComparison.OrdinalIgnoreCase))
+                // Charge the entire inspected query, including unrelated keys.
+                // A missing selector must not make repeated full scans free.
+                Charge(1L + (request.QueryString.Value?.Length ?? 0) / 64L);
+                var query = request.Query;
+                Charge(query.Count);
+                strings = query.Where(x => string.Equals(x.Key, condition.Key, StringComparison.OrdinalIgnoreCase))
                     .SelectMany(x => x.Value).Select(x => x ?? "").ToArray();
                 break;
             case "cookie":
@@ -179,8 +184,11 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                 // inspection failure must not become a no-match and select proxy.
                 try
                 {
-                    strings = CookieHeaderValue.ParseStrictList(request.Headers.Cookie.Select(x => x ?? "").ToArray())
-                        .Where(x => string.Equals(x.Name.Value, condition.Key, StringComparison.Ordinal))
+                    foreach (var header in request.Headers.Cookie)
+                        Charge(1L + (header?.Length ?? 0) / 64L);
+                    var cookies = CookieHeaderValue.ParseStrictList(request.Headers.Cookie.Select(x => x ?? "").ToArray());
+                    Charge(cookies.Count);
+                    strings = cookies.Where(x => string.Equals(x.Name.Value, condition.Key, StringComparison.Ordinal))
                         .Select(x => Uri.UnescapeDataString(x.Value.Value ?? "")).ToArray();
                 }
                 catch (FormatException)
@@ -208,6 +216,10 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
             default:
                 throw new RequestFailure(500);
         }
+        // Even presence checks materialize string values. Reserve their work
+        // before serialization, rather than charging only successful comparisons.
+        foreach (var value in strings)
+            Charge(1L + value.Length / 64L);
         return strings.Select(x => JsonSerializer.SerializeToElement(x)).ToArray();
     }
 

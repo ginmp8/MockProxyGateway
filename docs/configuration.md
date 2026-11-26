@@ -197,7 +197,12 @@ Filters also validate all numeric values in the inspected body once before the
 first filter, rejecting values that cannot be represented exactly as decimals.
 Numeric range comparisons reject unsupported decimal precision rather than rounding. Condition depth is at most 12; rule count 4096; condition nodes
 16384; body nodes 16384; weighted evaluation budget 65536; at most 64 regex
-evaluations per request. Body selector caching is bounded to twice the inspected
+evaluations per request. Query and cookie inspection charges the complete
+inspected input and entry count, including unrelated names; selected text values
+are charged before serialization even for presence operators. Budget exhaustion
+returns a sanitized 400 without a proxy fallback. An action that does not inspect
+these sources does not incur those inspection charges or modify the values.
+Body selector caching is bounded to twice the inspected
 body byte limit. Inspection is lazy; malformed JSON (including duplicate object
 names, invalid UTF-8 and unpaired Unicode surrogate escapes) returns 400,
 oversized bodies 413, unsupported media type 415; HTTP client errors raised by the host while reading a required body retain their sanitized status (including a stricter host body limit). Errors never select the proxy

@@ -1030,6 +1030,86 @@ public sealed class ForwardingTests
     }
 
     [Theory]
+    [InlineData("query")]
+    [InlineData("cookie")]
+    public async Task UnmatchedTextSelectorWorkIsBoundedBeforeAnyOutboundCall(string source)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var upstream = await Upstream.StartAsync();
+        using var capture = new CaptureProvider();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},
+              "endpoints":[{"method":"GET","path":"/uninspected","default":{"mode":"proxy","destination":"real"}}],
+              "rules":[{"id":"selected","priority":10,"conditions":{"source":"query","key":"scenario","operator":"equals","value":"selected"},
+                "action":{"mode":"mock","response":{"statusCode":200,"text":"selected"}}}]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        var serviceRules = rules["services"]!["a"]!["rules"]!.AsArray();
+        serviceRules[0]!["conditions"]!["source"] = source;
+        for (var i = 0; i < 1024; i++)
+        {
+            var rule = JsonNode.Parse("""
+                {"id":"missing","priority":1,"conditions":{"source":"query","key":"missing","operator":"exists"},
+                 "action":{"mode":"mock","response":{"statusCode":202}}}
+                """)!;
+            rule["id"] = "missing-" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            rule["conditions"]!["source"] = source;
+            serviceRules.Add(rule);
+        }
+
+        await using var gateway = await StartGatewayAsync(rules, upstream, capture: capture);
+        using var client = gateway.GetTestClient();
+        var fields = string.Join(source == "query" ? "&" : "; ", Enumerable.Range(0, 96)
+            .Select(i => "field" + i.ToString(System.Globalization.CultureInfo.InvariantCulture) + "=synthetic"));
+
+        // Many unrelated values and no winning rule used to consume uncharged
+        // scans, then reach the default proxy. The shared budget must stop it.
+        using (var request = Request("/check", fields))
+        using (var rejected = await client.SendAsync(request, ct))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+            Assert.Empty(await rejected.Content.ReadAsByteArrayAsync(ct));
+        }
+        Assert.Empty(upstream.Requests);
+        await WaitForGatewayLogAsync(capture, "status=400", "category=evaluation-budget", ct);
+
+        using (var request = Request("/check", "scenario=selected"))
+        using (var mock = await client.SendAsync(request, ct))
+        {
+            Assert.Equal(HttpStatusCode.OK, mock.StatusCode);
+            Assert.Equal("selected", await mock.Content.ReadAsStringAsync(ct));
+        }
+        Assert.Empty(upstream.Requests);
+
+        using (var request = Request("/check", "scenario=other"))
+        using (var proxy = await client.SendAsync(request, ct))
+            Assert.Equal(HttpStatusCode.Created, proxy.StatusCode);
+        Assert.Single(upstream.Requests);
+
+        // The same valid large input is forwarded transparently when the
+        // endpoint's explicit default does not require inspecting that source.
+        using (var request = Request("/uninspected", fields))
+        using (var proxy = await client.SendAsync(request, ct))
+            Assert.Equal(HttpStatusCode.Created, proxy.StatusCode);
+        Assert.Equal(2, upstream.Requests.Count);
+        var forwarded = upstream.Requests.Last();
+        if (source == "query")
+            Assert.Equal("/uninspected?" + fields, forwarded.Target);
+        else
+            Assert.Equal(fields, forwarded.Cookie);
+
+        HttpRequestMessage Request(string path, string values)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get,
+                "/mock-proxy/a" + path + (source == "query" ? "?" + values : ""));
+            if (source == "cookie")
+                request.Headers.TryAddWithoutValidation("Cookie", values);
+            return request;
+        }
+    }
+
+    [Theory]
     [InlineData("cookie", "synthetic-malformed-cookie", "cookie-syntax")]
     [InlineData("cookie", "other=synthetic; malformed", "cookie-syntax")]
     [InlineData("contentType", "synthetic invalid media type", "content-type-syntax")]

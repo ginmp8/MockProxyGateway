@@ -30,9 +30,11 @@ jobs:
           python3 - <<'PY'
           import glob
           import xml.etree.ElementTree as ET
-          counts = [int(node.attrib["total"]) for file in glob.glob("artifacts/test-results/*.trx")
-                    for node in ET.parse(file).getroot().iter() if node.tag.endswith("Counters")]
-          assert counts and sum(counts) > 0, "No tests discovered"
+          counters = [node.attrib for file in glob.glob("artifacts/test-results/*.trx")
+                      for node in ET.parse(file).getroot().iter() if node.tag.endswith("Counters")]
+          assert counters and sum(int(c["total"]) for c in counters) > 0, "No tests discovered"
+          assert all(int(c["total"]) == int(c["executed"]) == int(c["passed"]) for c in counters), \
+              "All discovered tests must execute and pass; skipped or incomplete tests are not acceptance"
           PY
       - name: Audit direct and transitive packages
         run: dotnet package list --vulnerable --include-transitive
