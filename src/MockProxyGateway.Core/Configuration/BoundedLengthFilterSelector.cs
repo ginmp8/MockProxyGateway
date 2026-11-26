@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Json.Path;
 
@@ -7,7 +8,7 @@ namespace MockProxyGateway.Configuration;
 // A filter-local adapter over the library's normal wildcard selector. It
 // preserves the exact original candidate nodes and their locations, including
 // duplicates from selector unions, without modifying any host function registry.
-internal sealed class BoundedLengthFilterSelector(JsonPath? argument, int? literalLength, decimal expected, string comparison, string expression) : ISelector
+internal sealed class BoundedLengthFilterSelector(JsonPath? argument, int? literalLength, JsonPath? expectedQuery, JsonElement expectedLiteral, string comparison, string expression) : ISelector
 {
     private static readonly ISelector Children = JsonPath.Parse("$[*]").Segments[0].Selectors[0];
 
@@ -22,33 +23,44 @@ internal sealed class BoundedLengthFilterSelector(JsonPath? argument, int? liter
 
     internal bool MatchesCandidate(JsonNode? rootNode, JsonNode? candidate)
     {
-        if (argument is null)
-            return Matches(literalLength);
-        var value = argument.Evaluate(argument.Scope == PathScope.Global ? rootNode : candidate)
-            .Matches.FirstOrDefault()?.Value;
-        int? length = value switch
+        var length = literalLength;
+        if (argument is not null)
         {
-            JsonObject obj => obj.Count,
-            JsonArray arr => arr.Count,
-            JsonValue scalar when scalar.TryGetValue<string>(out var text) => ScalarCount(text),
-            _ => null
-        };
-        return Matches(length);
-    }
+            var value = argument.Evaluate(argument.Scope == PathScope.Global ? rootNode : candidate)
+                .Matches.FirstOrDefault()?.Value;
+            length = value switch
+            {
+                JsonObject obj => obj.Count,
+                JsonArray arr => arr.Count,
+                JsonValue scalar when scalar.TryGetValue<string>(out var text) => ScalarCount(text),
+                _ => null
+            };
+        }
 
-    private bool Matches(int? length)
-    {
-        // Nothing is unequal to a numeric literal and unordered with respect to it.
-        if (length is not { } count)
+        var expected = expectedLiteral;
+        if (expectedQuery is not null)
+        {
+            var matches = expectedQuery.Evaluate(expectedQuery.Scope == PathScope.Global ? rootNode : candidate).Matches;
+            if (matches.Count == 0)
+                return length is null ? comparison is "==" or "<=" or ">=" : comparison == "!=";
+            // A selected null or container is a value, not Nothing. No need
+            // to serialize containers that cannot equal a length number.
+            if (matches[0].Value is not JsonValue scalar)
+                return comparison == "!=";
+            expected = JsonSerializer.SerializeToElement(scalar);
+        }
+
+        if (length is not { } count || expected.ValueKind != JsonValueKind.Number)
             return comparison == "!=";
+        var number = RuleCompiler.Number(expected);
         return comparison switch
         {
-            "==" => count == expected,
-            "!=" => count != expected,
-            "<" => count < expected,
-            ">" => count > expected,
-            "<=" => count <= expected,
-            ">=" => count >= expected,
+            "==" => count == number,
+            "!=" => count != number,
+            "<" => count < number,
+            ">" => count > number,
+            "<=" => count <= number,
+            ">=" => count >= number,
             _ => throw new InvalidOperationException("Invalid length comparison.")
         };
     }

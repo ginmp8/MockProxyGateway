@@ -142,15 +142,15 @@ filter cannot contain root references inside predicates, predicate unions or
 recursive descent;
 additional nested levels and a third descent inside any query remain rejected.
 The locked JsonPath.Net version is 2.2.0 (MIT). An outer filter
-`length(@.name) == 2` (or a root/singular indexed query or a string literal with any of the six
-comparison operators and an exact numeric literal) uses a gateway-local
+`length(@.name) == 2` (or a root/singular indexed query or a scalar literal with any of the six
+comparison operators and a singular query or scalar literal) uses a gateway-local
 selector: string length counts Unicode scalar values, object/array length
 counts members, and unsupported or missing values produce Nothing. The
 [pinned upstream length implementation](https://github.com/json-everything/json-everything/blob/f53d4d27eeed6a73d377bf4188175f0b8a46f856/src/JsonPath/LengthFunction.cs)
 counts graphemes, so the gateway does not evaluate that function or modify
-the process-global registry. The same traversal/byte budgets apply. Logical combinations with ordinary predicates and the other private functions are supported in outer filters and one nested relative existence query. String literals are decoded and counted once during compilation. Other length argument forms remain rejected. A single nested private relative filter may also be used as the left `count()` or `value()` operand compared with a literal. Count requires a numeric literal; value supports typed scalar literals, with zero or multiple nodes treated as Nothing.
+the process-global registry. The same traversal/byte budgets apply. Logical combinations with ordinary predicates and the other private functions are supported in outer filters and one nested relative existence query. String literals are decoded and counted once during compilation. Other scalar inputs produce Nothing. A missing comparison query also produces Nothing: two Nothing operands compare equal, whereas an explicit null is a value and differs from Nothing. Numeric comparisons remain exact; no text-to-number conversion occurs. Non-singular operands remain rejected. A single nested private relative filter may also be used as the left `count()` or `value()` operand compared with a literal. Count requires a numeric literal; value supports typed scalar literals, with zero or multiple nodes treated as Nothing.
 `match(@.name, 'test-.*')` and `search(@.name, '[A-Z]+')` use private
-selectors with constant I-Regexp patterns and singular relative/root queries or string-literal inputs. Literal input/pattern pairs are evaluated once at configuration compilation; the same conservative regex visit budget is retained. Dynamic pattern arguments remain unsupported.
+selectors with constant scalar pattern arguments and singular relative/root queries or scalar-literal inputs. Non-string inputs or patterns produce logical false. String input/pattern pairs are evaluated once at configuration compilation; the same conservative regex visit budget is retained. Dynamic pattern arguments remain unsupported.
 Supported patterns: Unicode literals (including literal ^ and $), scalar dot
 (excluding CR/LF), escaped literals, positive and negated Unicode scalar literal classes/ranges,
 and quantifiers (*, +, ?, {n}, {n,}, {n,m}), with explicit repetition bounds at

@@ -683,6 +683,12 @@ public sealed class ForwardingTests
     [InlineData("$.items[?length('é') == 2]", false, 202, 0)]
     [InlineData("$.items[?length('é') == 1]", false, 201, 1)]
     [InlineData("$.items[?length(\"😀\") == 1]", false, 202, 0)]
+    [InlineData("$.items[?length(42) != 0]", false, 202, 0)]
+    [InlineData("$.items[?length(null) == 0]", false, 201, 1)]
+    [InlineData("$.items[?length(@.name) == @.missing]", false, 201, 1)]
+    [InlineData("$.items[?length(@.missing) == @.other]", false, 202, 0)]
+    [InlineData("$.items[?length(@.name) == $.label]", false, 201, 1)]
+    [InlineData("$.items[?length(@.name) != $.label]", true, 400, 0)]
     public async Task LengthFilterIsScalarCorrectAndBudgetedWithoutGlobalRegistration(string selector, bool large, int status, int calls)
     {
         Assert.True(Json.Path.FunctionRepository.TryGet("length", out var originalFunction));
@@ -730,6 +736,10 @@ public sealed class ForwardingTests
     [InlineData("$.items[?search('abc', 'b')]", false, 202, 0)]
     [InlineData("$.items[?search('abc', 'z')]", false, 201, 1)]
     [InlineData("$.items[?match('x', 'x')]", true, 400, 0)]
+    [InlineData("$.items[?match(42, '42')]", false, 201, 1)]
+    [InlineData("$.items[?!search(null, 'x')]", false, 202, 0)]
+    [InlineData("$.items[?match(@.name, false)]", false, 201, 1)]
+    [InlineData("$.items[?!match(@.name, false)]", true, 400, 0)]
     public async Task RegexFilterIsScalarCorrectAndBudgetedWithoutGlobalRegistration(string selector, bool large, int status, int calls)
     {
         Assert.True(Json.Path.FunctionRepository.TryGet("match", out var originalFunction));

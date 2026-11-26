@@ -359,6 +359,45 @@ internal static class BoundedJsonPathFilter
     // The locked length() counts graphemes instead of Unicode scalars. Admit
     // a singular-query or string-literal comparison with a private predicate,
     // never by replacing a process-global JsonPath.Net function registration.
+    private static JsonElement ReadScalarLiteral(string path, ref int index)
+    {
+        SkipWhitespace(path, ref index);
+        var start = index;
+        if (index >= path.Length)
+            throw Invalid();
+        if (path[index] is '\'' or '"')
+            ReadQuoted(path, ref index);
+        else if (!Take(path, ref index, "true") && !Take(path, ref index, "false") &&
+                 !Take(path, ref index, "null"))
+        {
+            while (index < path.Length && (char.IsAsciiDigit(path[index]) || path[index] is '-' or '+' or '.' or 'e' or 'E'))
+                index++;
+        }
+        var literal = ReadComparisonLiteral(path[start..index].Trim());
+        if (literal.ValueKind == JsonValueKind.Number)
+            _ = RuleCompiler.Number(literal);
+        return literal;
+    }
+
+    private static JsonPath ReadSingularQuery(string path, ref int index, ref bool usesRepeatedTraversal)
+    {
+        SkipWhitespace(path, ref index);
+        var start = index;
+        if (index >= path.Length || path[index] is not ('@' or '$'))
+            throw Invalid();
+        usesRepeatedTraversal |= path[index++] == '$';
+        var unionProduct = 1;
+        var nested = false;
+        var repeatedDescent = false;
+        if (!ReadSegments(path, ref index, [], ref usesRepeatedTraversal, ref unionProduct,
+                ref nested, ref repeatedDescent, 0) ||
+            !JsonPath.TryParse(path[start..index].Trim(), out var query,
+                new PathParsingOptions { AllowRelativePathStart = true }) ||
+            !query.IsSingular || query.Segments.Length > 16)
+            throw Invalid();
+        return query;
+    }
+
     private static bool TryReadLengthFilter(string path, ref int index, out ISelector? selector, ref bool usesRepeatedTraversal)
     {
         selector = null;
@@ -369,37 +408,17 @@ internal static class BoundedJsonPathFilter
             return false;
         Require(path, ref cursor, "(");
         SkipWhitespace(path, ref cursor);
-        var start = cursor;
         if (cursor >= path.Length)
             throw Invalid();
         JsonPath? argument = null;
         int? literalLength = null;
-        if (path[cursor] is '\'' or '"')
-        {
-            ReadQuoted(path, ref cursor);
-            // Decode using the pinned parser's RFC string literal rules.
-            if (!JsonPath.TryParse("$[" + path[start..cursor] + "]", out var literal) ||
-                literal.Segments[0].Selectors[0] is not NameSelector name)
-                throw Invalid();
-            literalLength = BoundedLengthFilterSelector.ScalarCount(name.Name);
-        }
+        if (path[cursor] is '@' or '$')
+            argument = ReadSingularQuery(path, ref cursor, ref usesRepeatedTraversal);
         else
         {
-            if (path[cursor] is not ('@' or '$'))
-                throw Invalid();
-            usesRepeatedTraversal |= path[cursor] == '$';
-            while (cursor < path.Length && path[cursor] != ')')
-            {
-                if (path[cursor] is '\'' or '"')
-                    ReadQuoted(path, ref cursor);
-                else
-                    cursor++;
-            }
-            if (cursor == path.Length ||
-                !JsonPath.TryParse(path[start..cursor].Trim(), out argument,
-                    new PathParsingOptions { AllowRelativePathStart = true }) ||
-                !argument.IsSingular || argument.Segments.Length > 16)
-                throw Invalid();
+            var literal = ReadScalarLiteral(path, ref cursor);
+            if (literal.ValueKind == JsonValueKind.String)
+                literalLength = BoundedLengthFilterSelector.ScalarCount(literal.GetString()!);
         }
         Require(path, ref cursor, ")");
         string? comparison = null;
@@ -414,13 +433,15 @@ internal static class BoundedJsonPathFilter
         if (comparison is null)
             throw Invalid();
         SkipWhitespace(path, ref cursor);
-        start = cursor;
-        while (cursor < path.Length && (char.IsAsciiDigit(path[cursor]) || path[cursor] is '-' or '+' or '.' or 'e' or 'E'))
-            cursor++;
-        if (start == cursor)
+        if (cursor >= path.Length)
             throw Invalid();
-        using var number = JsonDocument.Parse(path[start..cursor]);
-        selector = new BoundedLengthFilterSelector(argument, literalLength, RuleCompiler.Number(number.RootElement), comparison,
+        JsonPath? expectedQuery = null;
+        JsonElement expectedLiteral = default;
+        if (path[cursor] is '@' or '$')
+            expectedQuery = ReadSingularQuery(path, ref cursor, ref usesRepeatedTraversal);
+        else
+            expectedLiteral = ReadScalarLiteral(path, ref cursor);
+        selector = new BoundedLengthFilterSelector(argument, literalLength, expectedQuery, expectedLiteral, comparison,
             path[expressionStart..cursor]);
         index = cursor;
         return true;
@@ -437,52 +458,29 @@ internal static class BoundedJsonPathFilter
             return false;
         Require(path, ref cursor, "(");
         SkipWhitespace(path, ref cursor);
-        var start = cursor;
         if (cursor >= path.Length)
             throw Invalid();
         JsonPath? argument = null;
         string? literalArgument = null;
-        if (path[cursor] is '\'' or '"')
-        {
-            ReadQuoted(path, ref cursor);
-            if (!JsonPath.TryParse("$[" + path[start..cursor] + "]", out var inputLiteral) ||
-                inputLiteral.Segments[0].Selectors[0] is not NameSelector inputName)
-                throw Invalid();
-            literalArgument = inputName.Name;
-        }
+        if (path[cursor] is '@' or '$')
+            argument = ReadSingularQuery(path, ref cursor, ref usesRepeatedTraversal);
         else
         {
-            if (path[cursor] is not ('@' or '$'))
-                throw Invalid();
-            usesRepeatedTraversal |= path[cursor] == '$';
-            while (cursor < path.Length && path[cursor] != ',')
-            {
-                if (path[cursor] is '\'' or '"')
-                    ReadQuoted(path, ref cursor);
-                else
-                    cursor++;
-            }
-            if (cursor == path.Length ||
-                !JsonPath.TryParse(path[start..cursor].Trim(), out argument,
-                    new PathParsingOptions { AllowRelativePathStart = true }) ||
-                !argument.IsSingular || argument.Segments.Length > 16)
-                throw Invalid();
+            var literal = ReadScalarLiteral(path, ref cursor);
+            if (literal.ValueKind == JsonValueKind.String)
+                literalArgument = literal.GetString();
         }
         Require(path, ref cursor, ",");
-        SkipWhitespace(path, ref cursor);
-        start = cursor;
-        if (cursor >= path.Length || path[cursor] is not ('\'' or '"'))
-            throw Invalid();
-        ReadQuoted(path, ref cursor);
-        // Reuse the pinned string-literal decoder through a name selector.
-        if (!JsonPath.TryParse("$[" + path[start..cursor] + "]", out var literal) ||
-            literal.Segments[0].Selectors[0] is not NameSelector name)
-            throw Invalid();
+        // Dynamic patterns remain rejected: compilation work is configuration-owned.
+        var patternLiteral = ReadScalarLiteral(path, ref cursor);
         Require(path, ref cursor, ")");
-        var pattern = BoundedRegexFilterSelector.Compile(name.Name, fullMatch);
-        // The configured literal and pattern are immutable. Evaluate the pair once
-        // at activation; retain the normal conservative per-filter visit charge.
-        bool? literalResult = literalArgument is null ? null : pattern.IsMatch(literalArgument);
+        var pattern = patternLiteral.ValueKind == JsonValueKind.String
+            ? BoundedRegexFilterSelector.Compile(patternLiteral.GetString()!, fullMatch)
+            : null;
+        // Non-string arguments are logical false, never coerced to text.
+        // Constant input/pattern pairs are evaluated at activation.
+        bool? literalResult = pattern is null ? false : argument is not null ? null :
+            literalArgument is not null && pattern.IsMatch(literalArgument);
         selector = new BoundedRegexFilterSelector(argument, literalResult, pattern, path[expressionStart..cursor]);
         index = cursor;
         return true;
