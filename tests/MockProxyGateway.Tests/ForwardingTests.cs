@@ -512,6 +512,56 @@ public sealed class ForwardingTests
         Assert.Single(upstream.Requests);
     }
 
+    [Theory]
+    [InlineData("header", "X-Scenario\n", "X-Scenario")]
+    [InlineData("cookie", "test=session", "test-session")]
+    public async Task InvalidSelectorReloadCannotReplaceActiveMockWithProxy(string source, string invalidKey, string validKey)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var upstream = await Upstream.StartAsync();
+        using var capture = new CaptureProvider();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},
+              "rules":[{"id":"selected","priority":10,"conditions":{"source":"header","key":"X-Scenario","operator":"equals","value":"synthetic"},
+                "action":{"mode":"mock","response":{"statusCode":200,"text":"selected"}}}]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        var condition = rules["services"]!["a"]!["rules"]![0]!["conditions"]!;
+        condition["source"] = source;
+        condition["key"] = validKey;
+        var published = rules.ToJsonString();
+        await using var gateway = await StartGatewayAsync(rules, upstream,
+            provider: () => System.Text.Json.JsonElement.Parse(Volatile.Read(ref published)), capture: capture);
+        using var client = gateway.GetTestClient();
+        await CheckMockAsync();
+
+        condition["key"] = invalidKey;
+        Volatile.Write(ref published, rules.ToJsonString());
+        await WaitForGatewayLogAsync(capture, "Gateway configuration reload rejected; retaining version 1.", "", ct);
+        await CheckMockAsync();
+
+        condition["key"] = validKey;
+        rules["services"]!["a"]!["rules"]![0]!["enabled"] = false;
+        Volatile.Write(ref published, rules.ToJsonString());
+        await WaitForGatewayLogAsync(capture, "Gateway configuration version 2 activated.", "", ct);
+        using var proxy = await client.GetAsync("/mock-proxy/a/check", ct);
+        Assert.Equal(HttpStatusCode.Created, proxy.StatusCode);
+        Assert.Equal("upstream", await proxy.Content.ReadAsStringAsync(ct));
+        Assert.Single(upstream.Requests);
+
+        async Task CheckMockAsync()
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/mock-proxy/a/check");
+            request.Headers.TryAddWithoutValidation("X-Scenario", "synthetic");
+            request.Headers.TryAddWithoutValidation("Cookie", "test-session=synthetic");
+            using var response = await client.SendAsync(request, ct);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("selected", await response.Content.ReadAsStringAsync(ct));
+            Assert.Empty(upstream.Requests);
+        }
+    }
+
     [Fact]
     public async Task MissingFixtureReloadRecoversWithoutAnotherRuleEdit()
     {

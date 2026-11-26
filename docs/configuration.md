@@ -67,7 +67,7 @@ The runtime additionally validates typed operands, numeric precision, duplicate
 identifiers, resource limits, destination permissions, and fixture paths.
 Identifiers and HTTP tokens must match the entire original string: trailing
 line breaks are invalid, and endpoint methods are validated as ASCII tokens
-before case normalization. Mock response header names must be HTTP tokens.
+before case normalization. Mock response header names and header/cookie selector keys must be HTTP tokens. Route selector keys must use the same identifier grammar as route parameters. Malformed selector names reject the whole candidate instead of becoming non-matches.
 All strings in the rule document, including nested operands and raw mock bodies,
 must decode as valid Unicode. Explicit JSON null is preserved in body values
 and typed operands; optional string metadata such as quantifier and pathRewrite
@@ -91,7 +91,7 @@ names use ordinal case-sensitive comparison. Cookie matching reads the original
 Cookie header with the framework parser, preserving case-distinct and repeated
 names; values are percent-decoded for matching only. Proxy headers are unchanged.
 Method and content type compare
-case-insensitively; content-type parameters are excluded. Path matching uses the
+case-insensitively, including the regex operator; content-type parameters are excluded. Path matching uses the
 decoded path with case-sensitive segments; a trailing slash is equivalent for rule
 selection. Dangerous encodings, dot segments, backslashes and ambiguous separators
 are rejected. Valid percent escapes in the request's gateway prefix or service

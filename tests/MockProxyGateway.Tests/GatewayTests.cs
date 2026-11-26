@@ -304,6 +304,10 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"method\",\"key\":null,\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.value\",\"operator\":\"equals\",\"value\":42,\"quantifier\":null}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.value\",\"operator\":\"jsonEquals\",\"value\":{\"nested\":[\"\\ud800\"]}}")]
+    [InlineData("{\"source\":\"header\",\"key\":\"X-Scenario\\n\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"header\",\"key\":\"X Scenario\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"cookie\",\"key\":\"test=session\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"route\",\"key\":\"invalid route\",\"operator\":\"exists\"}")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """
@@ -794,6 +798,32 @@ public sealed class GatewayTests
                  {"any":[{"source":"contentType","operator":"equals","value":"application/json"},
                          {"source":"contentType","operator":"equals","value":"application/problem+json"}]},
                  {"not":{"source":"header","key":"X-Disabled","operator":"exists"}}]},
+               "action":{"mode":"mock","response":{"statusCode":201}}}
+            ],"default":{"mode":"mock","response":{"statusCode":404}}}}}
+            """;
+        await using var fixture = await Fixture.StartAsync(rules);
+        using var request = new HttpRequestMessage(new HttpMethod(method), "/mock-proxy/test" + path)
+        {
+            Content = new StringContent("not inspected", Encoding.UTF8, type)
+        };
+        using var response = await fixture.Client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal((HttpStatusCode)expected, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("POST", "/check", "application/json", 201)]
+    [InlineData("post", "/check", "application/json", 201)]
+    [InlineData("POST", "/CHECK", "application/json", 404)]
+    [InlineData("GET", "/check", "application/json", 404)]
+    [InlineData("POST", "/check", "text/plain", 404)]
+    public async Task RegexConditionsRespectSourceSpecificCase(string method, string path, string type, int expected)
+    {
+        const string rules = """
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"rules":[
+              {"id":"match","priority":1,"conditions":{"all":[
+                 {"source":"method","operator":"regex","value":"^post$"},
+                 {"source":"path","operator":"regex","value":"^/check$"},
+                 {"source":"contentType","operator":"regex","value":"^APPLICATION/JSON$"}]},
                "action":{"mode":"mock","response":{"statusCode":201}}}
             ],"default":{"mode":"mock","response":{"statusCode":404}}}}}
             """;

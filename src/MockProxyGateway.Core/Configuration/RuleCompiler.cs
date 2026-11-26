@@ -120,6 +120,11 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             quantifier is not ("any" or "all" or "none") ||
             ((source is "contentType" or "method" or "path") ? key is not null : string.IsNullOrWhiteSpace(key)))
             throw Invalid("Invalid condition source, key or quantifier.");
+        // Reject impossible selector names at activation, rather than silently
+        // treating a malformed selector as a non-match that could select proxy.
+        if ((source is "header" or "cookie") && !GatewayPaths.HttpToken().IsMatch(key!) ||
+            source == "route" && !GatewayPaths.Identifier().IsMatch(key!))
+            throw Invalid("Invalid condition selector name.");
         var hasValue = item.TryGetProperty("value", out var operand);
         if (op is "exists" or "notExists" or "isNull")
         {
@@ -174,7 +179,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             if (pattern.Length > 256)
                 throw Invalid("Regular expression too long.");
             regex = new Regex(pattern, RegexOptions.CultureInvariant | RegexOptions.NonBacktracking |
-                (ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None), TimeSpan.FromMilliseconds(25));
+                (ignoreCase || source is "method" or "contentType" ? RegexOptions.IgnoreCase : RegexOptions.None), TimeSpan.FromMilliseconds(25));
         }
         JsonPath? jsonPath = null;
         var pathMultiplier = 1;

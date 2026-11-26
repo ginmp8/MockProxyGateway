@@ -334,6 +334,41 @@
         {
           "if": {
             "properties": {
+              "source": {
+                "enum": [
+                  "header",
+                  "cookie"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "key": {
+                "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+(?![\\s\\S])"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "route"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "key": {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}(?![\\s\\S])"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
               "operator": {
                 "enum": [
                   "exists",
