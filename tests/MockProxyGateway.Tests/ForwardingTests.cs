@@ -1616,8 +1616,10 @@ public sealed class ForwardingTests
             Assert.Equal(payload, Assert.Single(upstream.Requests).Body);
     }
 
-    [Fact]
-    public async Task OptionalNamedPolicyProtectsRealForwardingAndPreservesSeparateHostPolicy()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OptionalNamedPolicyProtectsRealForwardingAndPreservesSeparateHostPolicy(bool mutateHostOptions)
     {
         await using var upstream = await Upstream.StartAsync();
         var rules = JsonNode.Parse("""
@@ -1649,6 +1651,16 @@ public sealed class ForwardingTests
         var ct = TestContext.Current.CancellationToken;
         await app.StartAsync(ct);
         using var client = app.GetTestClient();
+
+        if (mutateHostOptions)
+        {
+            // Changing the host-owned options after activation must neither
+            // remove the policy nor replace the approved destination authority.
+            var mutable = app.Services.GetRequiredService<IOptions<GatewayOptions>>().Value;
+            mutable.AuthorizationPolicy = null;
+            mutable.AllowedDestinationAuthorities[0] = "unapproved.invalid";
+            mutable.AllowLoopbackForTests = false;
+        }
 
         using var anonymous = await client.GetAsync("/mock-proxy/a/check", ct);
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);

@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace MockProxyGateway.Tests;
@@ -310,6 +311,45 @@ public sealed class ConfigurationTests
                 await app.DisposeAsync();
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task StartupOptionsRemainFixedWhileSelectedProviderReloads()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var published = Rules;
+        var builder = TestHosting.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddMockProxyGateway(o =>
+        {
+            o.MaxBodySizeBytes = 128;
+            o.ProgrammaticRules = () => JsonElement.Parse(Volatile.Read(ref published));
+        });
+        await using var app = builder.Build();
+        app.UseMockProxyGateway();
+        await app.StartAsync(ct);
+        using var client = app.GetTestClient();
+        var mutable = app.Services.GetRequiredService<IOptions<GatewayOptions>>().Value;
+        mutable.MaxBodySizeBytes = 1;
+        mutable.ProgrammaticRules = () => throw new InvalidOperationException("unexpected replacement provider");
+        mutable.ReloadOnChange = false;
+
+        const string matching = """{"value":42,"flag":true,"nullable":null}""";
+        using var body = new StringContent(matching, Encoding.UTF8, "application/json");
+        using var initial = await client.PostAsync("/mock-proxy/demo/check", body, ct);
+        Assert.Equal(HttpStatusCode.Created, initial.StatusCode);
+        Volatile.Write(ref published, Rules.Replace("\"statusCode\":201", "\"statusCode\":202", StringComparison.Ordinal));
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            using var nextBody = new StringContent(matching, Encoding.UTF8, "application/json");
+            using var next = await client.PostAsync("/mock-proxy/demo/check", nextBody, ct);
+            if (next.StatusCode == HttpStatusCode.Accepted)
+                return;
+            Assert.Equal(HttpStatusCode.Created, next.StatusCode);
+            await Task.Delay(100, ct);
+        }
+        Assert.Fail("The originally selected provider did not reload its valid rule document.");
     }
 
     [Theory]

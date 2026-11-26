@@ -26,6 +26,7 @@ public static class MockProxyGatewayServiceCollectionExtensions
             });
         }
         services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton<GatewayStartupOptions>();
         services.TryAddSingleton<RuleStore>();
         services.TryAddSingleton<ProxyTransport>();
         services.TryAddSingleton<GatewayRuntime>();

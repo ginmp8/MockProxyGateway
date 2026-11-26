@@ -6,7 +6,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.AspNetCore.WebUtilities;
 using MockProxyGateway.Matching;
-using Microsoft.Extensions.Options;
 using MockProxyGateway.Configuration;
 using Yarp.ReverseProxy.Forwarder;
 
@@ -19,7 +18,7 @@ internal sealed class ProxyTransport : IDisposable
     private readonly ServiceProvider _forwarderServices;
     private readonly IHttpForwarder _forwarder;
 
-    public ProxyTransport(IOptions<GatewayOptions> options, TimeProvider clock)
+    public ProxyTransport(GatewayStartupOptions options, TimeProvider clock)
     {
         _options = options.Value;
         // The pinned YARP forwarder logs complete target URLs (including query strings).

@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Options;
 using MockProxyGateway;
 using MockProxyGateway.Configuration;
 using MockProxyGateway.Middleware;
@@ -15,7 +14,7 @@ public static class MockProxyGatewayApplicationBuilderExtensions
     public static IApplicationBuilder UseMockProxyGateway(this IApplicationBuilder app, string? prefix = null)
     {
         ArgumentNullException.ThrowIfNull(app);
-        var options = app.ApplicationServices.GetRequiredService<IOptions<GatewayOptions>>().Value;
+        var options = app.ApplicationServices.GetRequiredService<GatewayStartupOptions>().Value;
         if (!options.Enabled)
             return app;
         var env = app.ApplicationServices.GetRequiredService<IHostEnvironment>();

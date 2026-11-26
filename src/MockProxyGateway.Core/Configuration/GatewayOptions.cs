@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Options;
 
 namespace MockProxyGateway;
 
@@ -49,4 +50,22 @@ public sealed class GatewayOptions
     public string[] AllowedDestinationAddresses { get; set; } = [];
     /// <summary>Allow explicit literal loopback upstreams in Development or Testing.</summary>
     public bool AllowLoopbackForTests { get; set; }
+
+    internal GatewayOptions CopyForStartup()
+    {
+        // The host may retain its mutable IOptions value and input arrays.
+        // The runtime must never observe later changes to startup-only controls.
+        var copy = (GatewayOptions)MemberwiseClone();
+        copy.AllowedEnvironments = AllowedEnvironments?.ToArray();
+        copy.AllowedDestinationAuthorities = AllowedDestinationAuthorities.ToArray();
+        copy.AllowedDestinationAddresses = AllowedDestinationAddresses.ToArray();
+        return copy;
+    }
+}
+
+internal sealed class GatewayStartupOptions
+{
+    public GatewayStartupOptions(IOptions<GatewayOptions> options) => Value = options.Value.CopyForStartup();
+
+    internal GatewayOptions Value { get; }
 }

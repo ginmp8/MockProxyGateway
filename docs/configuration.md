@@ -28,7 +28,7 @@ loopback upstreams. No deployment or public package publication is required.
 
 Precedence: explicit middleware prefix > explicit C# option > host configuration
 (including normal appsettings/environment-provider precedence) > library default.
-Only the rule document is hot-reloaded. The host owns deployment and access control.
+Only the rule document is hot-reloaded. Activation captures a private copy of startup settings, including destination and environment arrays. Mutating the host's `IOptions<GatewayOptions>` value after activation does not change the authorization policy, resource limits, selected provider or approved destinations. The originally selected provider can still publish updated rule documents. The host owns deployment and access control.
 Registering DI alone is inert, including in Production.
 
 ## Select exactly one rule source
