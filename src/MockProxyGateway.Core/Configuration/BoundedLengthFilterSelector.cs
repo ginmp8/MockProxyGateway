@@ -9,7 +9,7 @@ namespace MockProxyGateway.Configuration;
 // preserves the exact original candidate nodes and their locations, including
 // duplicates from selector unions, without modifying any host function registry.
 internal sealed class BoundedLengthFilterSelector(JsonPath? argument, int? literalLength, JsonPath? expectedQuery, JsonElement expectedLiteral, string comparison, string expression,
-    (JsonPath? Query, int? Literal)? expectedLength = null) : ISelector
+    (JsonPath? Query, int? Literal)? expectedLength = null, bool expectedCount = false) : ISelector
 {
     private static readonly ISelector Children = JsonPath.Parse("$[*]").Segments[0].Selectors[0];
 
@@ -37,7 +37,11 @@ internal sealed class BoundedLengthFilterSelector(JsonPath? argument, int? liter
         if (expectedQuery is not null)
         {
             var matches = expectedQuery.Evaluate(expectedQuery.Scope == PathScope.Global ? rootNode : candidate).Matches;
-            if (matches.Count == 0)
+            // count() always returns a number, even for an empty nodelist;
+            // value() returns Nothing unless exactly one node is selected.
+            if (expectedCount)
+                return length is { } countValue ? CompareNumbers(countValue, matches.Count) : comparison == "!=";
+            if (matches.Count != 1)
                 return length is null ? comparison is "==" or "<=" or ">=" : comparison == "!=";
             // A selected null or container is a value, not Nothing. No need
             // to serialize containers that cannot equal a length number.

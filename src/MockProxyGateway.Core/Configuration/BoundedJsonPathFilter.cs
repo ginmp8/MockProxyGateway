@@ -485,14 +485,17 @@ internal static class BoundedJsonPathFilter
         JsonPath? expectedQuery = null;
         JsonElement expectedLiteral = default;
         (JsonPath? Query, int? Literal)? expectedLength = null;
+        var expectedCount = false;
         if (Take(path, ref cursor, "length"))
             expectedLength = ReadLengthArgument(path, ref cursor, ref usesRepeatedTraversal);
+        else if ((expectedCount = Take(path, ref cursor, "count")) || Take(path, ref cursor, "value"))
+            expectedQuery = ReadValueQuery(path, ref cursor, ref usesRepeatedTraversal);
         else if (path[cursor] is '@' or '$')
             expectedQuery = ReadSingularQuery(path, ref cursor, ref usesRepeatedTraversal);
         else
             expectedLiteral = ReadScalarLiteral(path, ref cursor);
         selector = new BoundedLengthFilterSelector(argument, literalLength, expectedQuery, expectedLiteral, comparison,
-            path[expressionStart..cursor], expectedLength);
+            path[expressionStart..cursor], expectedLength, expectedCount);
         index = cursor;
         return true;
     }
@@ -530,7 +533,10 @@ internal static class BoundedJsonPathFilter
         var operandCursor = 0;
         JsonPath? expectedQuery = null;
         JsonElement expectedLiteral = default;
-        if (operand.StartsWith('@') || operand.StartsWith('$'))
+        var expectedCount = Take(operand, ref operandCursor, "count");
+        if (expectedCount || Take(operand, ref operandCursor, "value"))
+            expectedQuery = ReadValueQuery(operand, ref operandCursor, ref usesRepeatedTraversal);
+        else if (operand.StartsWith('@') || operand.StartsWith('$'))
             expectedQuery = ReadSingularQuery(operand, ref operandCursor, ref usesRepeatedTraversal);
         else
             expectedLiteral = ReadScalarLiteral(operand, ref operandCursor);
@@ -550,7 +556,7 @@ internal static class BoundedJsonPathFilter
             _ => comparison
         };
         selector = new BoundedLengthFilterSelector(argument, literalLength, expectedQuery, expectedLiteral, reversed,
-            operand + " " + comparison + " " + path[index..cursor].Trim());
+            operand + " " + comparison + " " + path[index..cursor].Trim(), expectedCount: expectedCount);
         index = cursor;
         return true;
     }

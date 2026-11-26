@@ -1123,6 +1123,15 @@ public sealed class ForwardingTests
     [InlineData("$.items[?length(value(@.*)) == 1]", false, 201, 1)]
     [InlineData("$.items[?length(value(@.missing[*])) == @.other]", false, 202, 0)]
     [InlineData("$.items[?length(value($.items[*].name)) == 2]", true, 400, 0)]
+    [InlineData("$.items[?length(@.name) > count(@.*)]", false, 202, 0)]
+    [InlineData("$.items[?count(@.*) > length(@.name)]", false, 201, 1)]
+    [InlineData("$.items[?length(@.name) == count($.items[*].name)]", false, 201, 1)]
+    [InlineData("$.items[?length(@.name) == count($.items[*].name)]", true, 400, 0)]
+    [InlineData("$.items[?length(@.name) == value(@.*)]", false, 201, 1)]
+    [InlineData("$.items[?value(@.*) != length(@.name)]", false, 202, 0)]
+    [InlineData("$.items[?length(@.missing) == value(@.missing[*])]", false, 202, 0)]
+    [InlineData("$.items[?value(@.missing[*]) == length(@.missing)]", false, 202, 0)]
+    [InlineData("$.items[?value($.items[*].name) != length(@.name)]", true, 400, 0)]
     public async Task LengthFilterIsScalarCorrectAndBudgetedWithoutGlobalRegistration(string selector, bool large, int status, int calls)
     {
         Assert.True(Json.Path.FunctionRepository.TryGet("length", out var originalFunction));
