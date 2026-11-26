@@ -55,7 +55,7 @@ internal sealed class BoundedLengthFilterSelector(JsonPath? argument, int? liter
         return CompareNumbers(count, RuleCompiler.Number(expected));
     }
 
-    private static int? GetLength(JsonPath? query, int? literal, JsonNode? rootNode, JsonNode? candidate)
+    internal static int? GetLength(JsonPath? query, int? literal, JsonNode? rootNode, JsonNode? candidate)
     {
         if (query is null)
             return literal;

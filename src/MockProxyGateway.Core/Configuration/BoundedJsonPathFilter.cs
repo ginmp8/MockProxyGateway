@@ -179,8 +179,27 @@ internal static class BoundedJsonPathFilter
             }
             if (++_termCount > 16)
                 throw Invalid();
-            if (TryReadLengthFilter(path, ref _index, out var local, ref _usesRepeatedTraversal))
-                return ((BoundedLengthFilterSelector)local!).MatchesCandidate;
+            // The ordinary length adapter cannot consume a private nested
+            // filter. Probe without committing parser state; the full operand
+            // reader below admits only a single nested filter and retains its
+            // original traversal/regex budget flags.
+            ISelector? local;
+            var lengthCursor = _index;
+            var lengthTraversal = _usesRepeatedTraversal;
+            try
+            {
+                if (TryReadLengthFilter(path, ref lengthCursor, out local, ref lengthTraversal))
+                {
+                    _index = lengthCursor;
+                    _usesRepeatedTraversal = lengthTraversal;
+                    return ((BoundedLengthFilterSelector)local!).MatchesCandidate;
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // Reparse with the bounded local operand reader; an ordinary
+                // malformed length expression is still rejected below.
+            }
             if (TryReadRegexFilter(path, ref _index, out local, ref _usesRepeatedTraversal))
             {
                 RegexCount++;
@@ -209,8 +228,20 @@ internal static class BoundedJsonPathFilter
                     path[nestedStart..cursor]);
             }
 
-            var left = ReadOperand(path, ref _index, grouping, ref _usesRepeatedTraversal,
-                ref _maxUnionProduct, ref _hasNestedFilter, ref _hasRepeatedPredicateDescent, 0, ReadNestedPrivate);
+            (bool Query, bool Comparable) ReadLocalOperand(ref int cursor,
+                out (JsonPath? Query, int? Literal)? lengthOperand)
+            {
+                lengthOperand = null;
+                if (Take(path, ref cursor, "length"))
+                {
+                    lengthOperand = ReadLengthArgument(path, ref cursor, ref _usesRepeatedTraversal);
+                    return (false, true);
+                }
+                return ReadOperand(path, ref cursor, grouping, ref _usesRepeatedTraversal,
+                    ref _maxUnionProduct, ref _hasNestedFilter, ref _hasRepeatedPredicateDescent, 0, ReadNestedPrivate);
+            }
+
+            var left = ReadLocalOperand(ref _index, out var leftLength);
             var leftEnd = _index;
             var leftContainsPrivate = nestedPrivate is not null;
             string? comparison = null;
@@ -223,17 +254,20 @@ internal static class BoundedJsonPathFilter
                 }
             }
             var rightStart = _index;
+            (JsonPath? Query, int? Literal)? rightLength = null;
             if (comparison is not null)
             {
-                if (nestedPrivate is null && TryReadReversedLengthFilter(path, ref _index,
+                if (leftLength is null && nestedPrivate is null && TryReadReversedLengthFilter(path, ref _index,
                         path[leafStart..leftEnd].Trim(), comparison, out local, ref _usesRepeatedTraversal))
                     return ((BoundedLengthFilterSelector)local!).MatchesCandidate;
-                var right = ReadOperand(path, ref _index, grouping, ref _usesRepeatedTraversal,
-                    ref _maxUnionProduct, ref _hasNestedFilter, ref _hasRepeatedPredicateDescent, 0, ReadNestedPrivate);
+                var right = ReadLocalOperand(ref _index, out rightLength);
                 if (!left.Comparable || !right.Comparable)
                     throw Invalid();
             }
             else if (!left.Query)
+                throw Invalid();
+
+            if (nestedPrivate is null && (leftLength is not null || rightLength is not null))
                 throw Invalid();
 
             // Keep the existing unary NOT correction for ordinary nested
@@ -252,6 +286,7 @@ internal static class BoundedJsonPathFilter
                 JsonElement expected = default;
                 JsonPath? expectedQuery = null;
                 string? expectedFunction = null;
+                var expectedLength = leftContainsPrivate ? rightLength : leftLength;
                 if (comparison is not null)
                 {
                     var open = queryText.IndexOf('(');
@@ -265,8 +300,8 @@ internal static class BoundedJsonPathFilter
                     // ReadOperand has already admitted both operands under the same
                     // relative-query and traversal limits. Only count/value may
                     // consume a non-singular query on the other side.
-                    if (rightText.StartsWith("count", StringComparison.Ordinal) ||
-                        rightText.StartsWith("value", StringComparison.Ordinal))
+                    if (expectedLength is null && (rightText.StartsWith("count", StringComparison.Ordinal) ||
+                        rightText.StartsWith("value", StringComparison.Ordinal)))
                     {
                         var otherOpen = rightText.IndexOf('(');
                         if (otherOpen < 0 || !rightText.EndsWith(')'))
@@ -285,7 +320,7 @@ internal static class BoundedJsonPathFilter
                             expectedQuery.Segments.Length > 16)
                             throw Invalid();
                     }
-                    else
+                    else if (expectedLength is null)
                     {
                         expected = ReadComparisonLiteral(rightText);
                     }
@@ -312,8 +347,10 @@ internal static class BoundedJsonPathFilter
                     return (_, candidate) =>
                     {
                         var actual = EvaluateComparisonQuery(query, function, candidate);
-                        var operand = expectedQuery is null ? expected :
-                            EvaluateComparisonQuery(expectedQuery, expectedFunction, candidate);
+                        var operand = expectedLength is { } length
+                            ? LengthValue(length.Query, length.Literal, candidate)
+                            : expectedQuery is null ? expected :
+                                EvaluateComparisonQuery(expectedQuery, expectedFunction, candidate);
                         return leftContainsPrivate ? CompareValue(actual, operand, comparison!) : CompareValue(operand, actual, comparison!);
                     };
                 }
@@ -343,6 +380,10 @@ internal static class BoundedJsonPathFilter
         using var document = JsonDocument.Parse(text);
         return document.RootElement.Clone();
     }
+
+    private static JsonElement LengthValue(JsonPath? query, int? literal, JsonNode? candidate) =>
+        BoundedLengthFilterSelector.GetLength(query, literal, candidate, candidate) is { } length
+            ? JsonSerializer.SerializeToElement(length) : default;
 
     private static JsonElement EvaluateComparisonQuery(JsonPath query, string? function, JsonNode? candidate) =>
         function == "count" ? JsonSerializer.SerializeToElement(query.Evaluate(candidate).Matches.Count) :

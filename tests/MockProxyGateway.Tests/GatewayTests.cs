@@ -765,6 +765,16 @@ public sealed class GatewayTests
     [InlineData("$.items[?value(@.other[*]) == length(@.missing)].value", "{\"labels\":[1],\"items\":[{\"other\":[null],\"value\":42}]}", 404)]
     [InlineData("$.items[?value(@.other[*]) == length(@.missing)].value", "{\"labels\":[1],\"items\":[{\"other\":[],\"value\":42}]}", 201)]
     [InlineData("$.items[?length(@.name) == count($.labels[*])].value", "{\"labels\":[1],\"items\":[{\"name\":\"😀\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?count(@.nested[?match(@.name, 'x')]) == length(@.name)].value", "{\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":1}],\"name\":\"😀\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(@.name) == count(@.nested[?match(@.name, 'x')])].value", "{\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":1}],\"name\":\"😀\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(@.name) < count(@.nested[?match(@.name, 'x')])].value", "{\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":1}],\"name\":\"😀\",\"value\":42}]}", 404)]
+    [InlineData("$.items[?count(@.nested[?match(@.name, 'x')]) < length('ab')].value", "{\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":1}],\"name\":\"😀\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?length('ab') > value(@.nested[?match(@.name, 'x')].flag)].value", "{\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":1}],\"name\":\"😀\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?value(@.nested[?match(@.name, 'x')].flag) > length('ab')].value", "{\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":1}],\"name\":\"😀\",\"value\":42}]}", 404)]
+    [InlineData("$.items[?value(@.nested[?match(@.name, 'x')].missing) == length(@.missing)].value", "{\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":1}],\"name\":\"😀\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(@.missing) == value(@.nested[?match(@.name, 'x')].flag)].value", "{\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":1}],\"name\":\"😀\",\"value\":42}]}", 404)]
+    [InlineData("$.items[?length(@.nested) == count(@.nested[?length(@.name) == 1])].value", "{\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":1}],\"name\":\"😀\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?count(@.nested[?length(@.name) == 1]) == length(@.nested)].value", "{\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":1}],\"name\":\"😀\",\"value\":42}]}", 201)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """
