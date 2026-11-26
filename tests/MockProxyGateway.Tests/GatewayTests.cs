@@ -619,6 +619,18 @@ public sealed class GatewayTests
     [InlineData("$.items[?value(@.nested[?match(@.name, 'x')].flag) == 'yes'].value", "{\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":\"yes\"}],\"value\":42}]}", 201)]
     [InlineData("$.items[?value(@.nested[?match(@.name, 'x')].flag) == true].value", "{\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":true}],\"value\":42}]}", 201)]
     [InlineData("$.items[?value(@.nested[?match(@.name, 'x')].flag) == null].value", "{\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":[]}],\"value\":42}]}", 404)]
+    [InlineData("$.items[?match('😀', '.')].value", "{\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?match('é', '.')].value", "{\"items\":[{\"value\":42}]}", 404)]
+    [InlineData("$.items[?match('é', '..')].value", "{\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?search('abc', 'b')].value", "{\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?match('abc', 'b')].value", "{\"items\":[{\"value\":42}]}", 404)]
+    [InlineData("$.items[?match('', '')].value", "{\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?search('a,b', ',')].value", "{\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?match('x', 'x') && @.active == true].value", "{\"items\":[{\"active\":false,\"value\":42}]}", 404)]
+    [InlineData("$.items[?!search('abc', 'z') && @.active == true].value", "{\"items\":[{\"active\":true,\"value\":42}]}", 201)]
+    [InlineData("$.items[?@.nested[?match('x', 'x')]].value", "{\"items\":[{\"nested\":[{}],\"value\":42}]}", 201)]
+    [InlineData("$.items[?@.nested[?search('abc', 'z')]].value", "{\"items\":[{\"nested\":[{}],\"value\":42}]}", 404)]
+    [InlineData("$.items[?match('x', 'x')].value", "{\"items\":[]}", 404)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """

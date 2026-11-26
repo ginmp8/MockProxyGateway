@@ -8,7 +8,7 @@ using MockProxyGateway.Matching;
 namespace MockProxyGateway.Configuration;
 
 // Bounded I-Regexp subset. Never invoke or replace the library's global regex functions.
-internal sealed class BoundedRegexFilterSelector(JsonPath argument, BoundedRegexFilterSelector.CompiledPattern regex, string expression) : ISelector
+internal sealed class BoundedRegexFilterSelector(JsonPath? argument, bool? literalResult, BoundedRegexFilterSelector.CompiledPattern regex, string expression) : ISelector
 {
     private static readonly ISelector Children = JsonPath.Parse("$[*]").Segments[0].Selectors[0];
 
@@ -23,7 +23,10 @@ internal sealed class BoundedRegexFilterSelector(JsonPath argument, BoundedRegex
 
     internal bool MatchesCandidate(JsonNode? rootNode, JsonNode? candidate)
     {
-        var value = argument.Evaluate(argument.Scope == PathScope.Global ? rootNode : candidate)
+        if (literalResult is bool constant)
+            return constant;
+        var query = argument ?? throw Invalid();
+        var value = query.Evaluate(query.Scope == PathScope.Global ? rootNode : candidate)
             .Matches.FirstOrDefault()?.Value;
         return value is JsonValue scalar && scalar.TryGetValue<string>(out var text) && regex.IsMatch(text);
     }

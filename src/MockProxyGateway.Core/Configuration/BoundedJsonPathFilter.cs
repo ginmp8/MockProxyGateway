@@ -438,21 +438,36 @@ internal static class BoundedJsonPathFilter
         Require(path, ref cursor, "(");
         SkipWhitespace(path, ref cursor);
         var start = cursor;
-        if (cursor >= path.Length || path[cursor] is not ('@' or '$'))
+        if (cursor >= path.Length)
             throw Invalid();
-        usesRepeatedTraversal |= path[cursor] == '$';
-        while (cursor < path.Length && path[cursor] != ',')
+        JsonPath? argument = null;
+        string? literalArgument = null;
+        if (path[cursor] is '\'' or '"')
         {
-            if (path[cursor] is '\'' or '"')
-                ReadQuoted(path, ref cursor);
-            else
-                cursor++;
+            ReadQuoted(path, ref cursor);
+            if (!JsonPath.TryParse("$[" + path[start..cursor] + "]", out var inputLiteral) ||
+                inputLiteral.Segments[0].Selectors[0] is not NameSelector inputName)
+                throw Invalid();
+            literalArgument = inputName.Name;
         }
-        if (cursor == path.Length ||
-            !JsonPath.TryParse(path[start..cursor].Trim(), out var argument,
-                new PathParsingOptions { AllowRelativePathStart = true }) ||
-            !argument.IsSingular || argument.Segments.Length > 16)
-            throw Invalid();
+        else
+        {
+            if (path[cursor] is not ('@' or '$'))
+                throw Invalid();
+            usesRepeatedTraversal |= path[cursor] == '$';
+            while (cursor < path.Length && path[cursor] != ',')
+            {
+                if (path[cursor] is '\'' or '"')
+                    ReadQuoted(path, ref cursor);
+                else
+                    cursor++;
+            }
+            if (cursor == path.Length ||
+                !JsonPath.TryParse(path[start..cursor].Trim(), out argument,
+                    new PathParsingOptions { AllowRelativePathStart = true }) ||
+                !argument.IsSingular || argument.Segments.Length > 16)
+                throw Invalid();
+        }
         Require(path, ref cursor, ",");
         SkipWhitespace(path, ref cursor);
         start = cursor;
@@ -464,8 +479,11 @@ internal static class BoundedJsonPathFilter
             literal.Segments[0].Selectors[0] is not NameSelector name)
             throw Invalid();
         Require(path, ref cursor, ")");
-        selector = new BoundedRegexFilterSelector(argument,
-            BoundedRegexFilterSelector.Compile(name.Name, fullMatch), path[expressionStart..cursor]);
+        var pattern = BoundedRegexFilterSelector.Compile(name.Name, fullMatch);
+        // The configured literal and pattern are immutable. Evaluate the pair once
+        // at activation; retain the normal conservative per-filter visit charge.
+        bool? literalResult = literalArgument is null ? null : pattern.IsMatch(literalArgument);
+        selector = new BoundedRegexFilterSelector(argument, literalResult, pattern, path[expressionStart..cursor]);
         index = cursor;
         return true;
     }
