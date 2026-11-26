@@ -458,6 +458,46 @@ public sealed class ConfigurationTests
 
 
     [Theory]
+    [InlineData("File")]
+    [InlineData("Inline")]
+    [InlineData("Configuration")]
+    public async Task FlattenedSerializedRuleChildrenRejectActivation(string source)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var directory = Directory.CreateTempSubdirectory("mock-proxy-source-conflict-").FullName;
+        try
+        {
+            var settings = new JsonObject { ["MockProxyGateway"] = new JsonObject { ["RuleSource"] = source } };
+            if (source == "Inline")
+                settings["MockProxyGateway"]!["Rules"] = JsonNode.Parse(Rules);
+            if (source == "Configuration")
+                settings["MockProxyGateway"]!["RulesJson"] = Rules;
+            await File.WriteAllTextAsync(Path.Combine(directory, "appsettings.json"), settings.ToJsonString(), ct);
+            if (source == "File")
+                await File.WriteAllTextAsync(Path.Combine(directory, "mock-proxy-gateway.json"), Rules, ct);
+            var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+            {
+                EnvironmentName = "Development",
+                ContentRootPath = directory
+            });
+            builder.WebHost.UseTestServer();
+            // A different provider contributes children under the serialized document.
+            // Do not silently ignore them even when the selected source is otherwise valid.
+            builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["MockProxyGateway:RulesJson:unexpected"] = "synthetic"
+            });
+            builder.Services.AddMockProxyGateway();
+            await using var app = builder.Build();
+            Assert.Throws<InvalidOperationException>(() => app.UseMockProxyGateway());
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ConflictingExplicitRuleSourcesAreRejected(bool externalConfiguration)

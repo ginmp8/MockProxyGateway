@@ -41,7 +41,10 @@ Registering DI alone is inert, including in Production.
   mixed serialized and nested sources, or flattened representations are rejected.
 - **Serialized configuration:** set `RuleSource: Configuration` and
   `MockProxyGateway:RulesJson` to the complete document as a JSON string. Live values
-  from the host configuration pipeline are polled. An explicit C# RulesJson assignment
+  from the host configuration pipeline are polled. The serialized section must be
+  a single scalar: children contributed by any configuration provider are invalid,
+  even if a valid serialized value also exists. File and Inline reject any competing
+  serialized section, including flattened children. An explicit C# RulesJson assignment
   is fixed at startup, even when equal to the original bound value.
 - **Explicit IConfiguration:** call `builder.Services.AddMockProxyGateway(configSection)`
   with a scalar section containing JSON, or a dedicated configuration containing only

@@ -72,7 +72,7 @@ map, not a declaration that an unexecuted candidate passed.
 | AC-15 | README, configuration.md, rules.schema.json, sample, curl and Docker scripts |
 | AC-16 | .github/workflows/ci.yml and package inspection/smoke |
 | AC-17 | Host Dockerfile and scripts/docker-smoke.sh |
-| AC-18 | ConfigurationTests.AllSourcesPreserveTypedValuesAndShareValidation, SelectedSourcesReloadValidUpdatesAndRetainLastGood, EnvironmentAndProgrammaticOptionsAndExplicitPrefixHavePrecedence, ExplicitSerializedRulesRemainAuthoritativeEvenWhenInitialValueEqualsHostValue, ConflictingConfiguredRuleSourcesAreRejected, ConflictingExplicitRuleSourcesAreRejected, MissingSelectedFileAndDefaultEnvironmentGateRejectActivation; GatewayTests.DisabledGatewayDoesNotRequireFile |
+| AC-18 | ConfigurationTests.AllSourcesPreserveTypedValuesAndShareValidation, SelectedSourcesReloadValidUpdatesAndRetainLastGood, EnvironmentAndProgrammaticOptionsAndExplicitPrefixHavePrecedence, ExplicitSerializedRulesRemainAuthoritativeEvenWhenInitialValueEqualsHostValue, ConflictingConfiguredRuleSourcesAreRejected, FlattenedSerializedRuleChildrenRejectActivation, ConflictingExplicitRuleSourcesAreRejected, ForwardingTests.AmbiguousSerializedRuleReloadCannotReplaceActiveMockWithProxy, MissingSelectedFileAndDefaultEnvironmentGateRejectActivation; GatewayTests.DisabledGatewayDoesNotRequireFile |
 
 Current limitations are explicit in configuration.md. The bounded JSONPath subset
 is not unrestricted RFC 9535; the gateway uses the actual JsonPath.Net parser and

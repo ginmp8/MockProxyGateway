@@ -69,14 +69,17 @@ internal sealed partial class RuleStore : IAsyncDisposable
         {
             if (_configuration.GetSection("MockProxyGateway:Rules").Exists())
                 throw new InvalidOperationException("Conflicting inline and serialized rule sources.");
-            var json = (_hasExplicitSerialized ? _explicitSerialized : _configuration["MockProxyGateway:RulesJson"]) ??
+            var serialized = _configuration.GetSection("MockProxyGateway:RulesJson");
+            if (serialized.GetChildren().Any())
+                throw new InvalidOperationException("Serialized rules must be a single scalar document.");
+            var json = (_hasExplicitSerialized ? _explicitSerialized : serialized.Value) ??
                 throw new InvalidOperationException("Complete serialized rule document required.");
             bytes = Encoding.UTF8.GetBytes(json);
         }
         else if (string.Equals(_options.RuleSource, "File", StringComparison.OrdinalIgnoreCase))
         {
             if (_configuration.GetSection("MockProxyGateway:Rules").Exists() ||
-                _configuration["MockProxyGateway:RulesJson"] is not null || _explicitSerialized is not null)
+                _configuration.GetSection("MockProxyGateway:RulesJson").Exists() || _explicitSerialized is not null)
                 throw new InvalidOperationException("Conflicting file and inline/serialized rule sources.");
             var path = Path.GetFullPath(_options.ConfigurationFile, _environment.ContentRootPath);
             using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
@@ -111,7 +114,7 @@ internal sealed partial class RuleStore : IAsyncDisposable
     private byte[] ReadInline()
     {
         const string section = "MockProxyGateway:Rules";
-        if (_configuration["MockProxyGateway:RulesJson"] is not null || _explicitSerialized is not null ||
+        if (_configuration.GetSection("MockProxyGateway:RulesJson").Exists() || _explicitSerialized is not null ||
             _configuration is not IConfigurationRoot root)
             throw new InvalidOperationException("Conflicting or unsupported inline rule source.");
         var providers = root.Providers.Where(provider =>
