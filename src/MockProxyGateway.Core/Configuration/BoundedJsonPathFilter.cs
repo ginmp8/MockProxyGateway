@@ -248,6 +248,7 @@ internal static class BoundedJsonPathFilter
                 var queryText = comparison is null ? expression.ToString().Trim() : path[leafStart..leftEnd].Trim();
                 string? function = null;
                 JsonElement expected = default;
+                JsonPath? expectedQuery = null;
                 if (comparison is not null)
                 {
                     var open = queryText.IndexOf('(');
@@ -257,9 +258,19 @@ internal static class BoundedJsonPathFilter
                     if (function is not ("count" or "value"))
                         throw Invalid();
                     queryText = queryText[(open + 1)..^1].Trim();
-                    expected = ReadComparisonLiteral(path[rightStart.._index].Trim());
-                    if (function == "count" && expected.ValueKind != JsonValueKind.Number)
-                        throw Invalid();
+                    var rightText = path[rightStart.._index].Trim();
+                    if (rightText.StartsWith('@'))
+                    {
+                        if (!JsonPath.TryParse("$" + rightText[1..], out expectedQuery) ||
+                            !expectedQuery.IsSingular || expectedQuery.Segments.Length > 16)
+                            throw Invalid();
+                    }
+                    else
+                    {
+                        expected = ReadComparisonLiteral(rightText);
+                        if (function == "count" && expected.ValueKind != JsonValueKind.Number)
+                            throw Invalid();
+                    }
                 }
                 if (queryText[0] != '@' ||
                     !JsonPath.TryParse("$" + queryText[1..], out var query) ||
@@ -280,17 +291,20 @@ internal static class BoundedJsonPathFilter
                     throw Invalid();
                 if (function == "count")
                 {
-                    var number = RuleCompiler.Number(expected);
-                    return (_, candidate) => CompareOrder(((decimal)query.Evaluate(candidate).Matches.Count).CompareTo(number), comparison!);
+                    return (_, candidate) =>
+                    {
+                        var actual = JsonSerializer.SerializeToElement(query.Evaluate(candidate).Matches.Count);
+                        var operand = expectedQuery is null ? expected : SelectedValue(expectedQuery, candidate);
+                        return CompareValue(actual, operand, comparison!);
+                    };
                 }
                 if (function == "value")
                 {
                     return (_, candidate) =>
                     {
-                        var matches = query.Evaluate(candidate).Matches;
-                        return matches.Count == 1
-                            ? CompareValue(matches[0].Value, expected, comparison!)
-                            : comparison == "!=";
+                        var actual = SelectedValue(query, candidate);
+                        var operand = expectedQuery is null ? expected : SelectedValue(expectedQuery, candidate);
+                        return CompareValue(actual, operand, comparison!);
                     };
                 }
                 return (_, candidate) => query.Evaluate(candidate).Matches.Count != 0;
@@ -320,13 +334,20 @@ internal static class BoundedJsonPathFilter
         return document.RootElement.Clone();
     }
 
-    private static bool CompareValue(JsonNode? value, JsonElement expected, string comparison)
+    private static JsonElement SelectedValue(JsonPath query, JsonNode? candidate)
     {
-        // A selected JSON null is a value; zero or multiple selected nodes
-        // are Nothing (handled by the caller). A container cannot equal a scalar.
-        if (value is JsonObject or JsonArray)
-            return comparison == "!=";
-        var actual = JsonSerializer.SerializeToElement(value);
+        var matches = query.Evaluate(candidate).Matches;
+        // Undefined represents Nothing; a selected JSON null remains a value.
+        return matches.Count == 1 ? JsonSerializer.SerializeToElement(matches[0].Value) : default;
+    }
+
+    private static bool CompareValue(JsonElement actual, JsonElement expected, string comparison)
+    {
+        if (actual.ValueKind == JsonValueKind.Undefined || expected.ValueKind == JsonValueKind.Undefined)
+        {
+            var bothNothing = actual.ValueKind == expected.ValueKind;
+            return bothNothing ? comparison is "==" or "<=" or ">=" : comparison == "!=";
+        }
         var equal = JsonElement.DeepEquals(actual, expected);
         if (equal)
             return CompareOrder(0, comparison);
