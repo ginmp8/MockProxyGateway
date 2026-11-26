@@ -34,6 +34,9 @@ internal sealed class ProxyTransport : IDisposable
         _forwarder = _forwarderServices.GetRequiredService<IHttpForwarder>();
         _client = new HttpMessageInvoker(new SocketsHttpHandler
         {
+            // Keep incoming trace headers as ordinary application data; never inject
+            // the gateway's ambient activity or baggage into an upstream request.
+            ActivityHeadersPropagator = null,
             UseProxy = false,
             UseCookies = false,
             AllowAutoRedirect = false,

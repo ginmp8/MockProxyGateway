@@ -235,6 +235,10 @@ a business mutation did not occur. Client cancellation propagates. All valid
 end-to-end request headers, including Authorization, Cookie, API keys, arbitrary
 custom headers, scenario headers, Forwarded and X-Forwarded-* pass through without
 gateway-level filtering or identity synthesis. No configuration is required.
+The gateway-owned HTTP handler disables automatic activity-header propagation:
+existing trace and baggage headers remain ordinary incoming headers, and ambient
+host context is never injected when those headers are absent. Gateway correlation
+logging remains available; this does not change host-wide tracing settings.
 YARP handles HTTP protocol-specific headers, and the outbound Host uses the
 registered destination authority. Each registered destination must be trusted
 with the complete end-to-end header set. Upstreams must not treat untrusted

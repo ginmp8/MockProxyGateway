@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using System.Net;
@@ -188,6 +189,66 @@ public sealed class ForwardingTests
         Assert.Equal("/must-not-be-followed", redirectResponse.Headers.Location?.OriginalString);
         Assert.Equal(primaryCount + (scenario == "default" ? 1 : 0), upstream.Requests.Count);
         Assert.Equal(alternateCount + (scenario == "alternate" ? 1 : 0), alternate.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AmbientHostActivityDoesNotSynthesizeUpstreamTraceHeaders(bool includeIncomingHeaders)
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        var builder = TestHosting.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddMockProxyGateway(options =>
+        {
+            options.ProgrammaticRules = () => System.Text.Json.JsonSerializer.SerializeToElement(rules);
+            options.ReloadOnChange = false;
+            options.AllowLoopbackForTests = true;
+            options.AllowedDestinationAuthorities = [new Uri(upstream.BaseUrl).Authority];
+        });
+        await using var app = builder.Build();
+        app.Use(async (context, next) =>
+        {
+            using var activity = new Activity("synthetic-host-operation").SetIdFormat(ActivityIdFormat.W3C).Start();
+            activity.TraceStateString = "host=synthetic";
+            activity.AddBaggage("private-host-context", "synthetic-only");
+            await next(context);
+        });
+        app.UseMockProxyGateway();
+        var ct = TestContext.Current.CancellationToken;
+        await app.StartAsync(ct);
+        using var client = app.GetTestClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/mock-proxy/a/resource");
+        var traceHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["traceparent"] = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+            ["tracestate"] = "client=synthetic",
+            ["baggage"] = "client-context=synthetic",
+            ["Request-Id"] = "|synthetic.client.",
+            ["Correlation-Context"] = "client-context=synthetic"
+        };
+        if (includeIncomingHeaders)
+        {
+            foreach (var header in traceHeaders)
+                Assert.True(request.Headers.TryAddWithoutValidation(header.Key, header.Value));
+        }
+
+        using var response = await client.SendAsync(request, ct);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var actual = Assert.Single(upstream.Requests);
+        foreach (var header in traceHeaders)
+        {
+            if (includeIncomingHeaders)
+                Assert.Equal(header.Value, actual.Headers[header.Key]);
+            else
+                Assert.False(actual.Headers.ContainsKey(header.Key));
+        }
+        Assert.Equal("/resource", actual.Target);
     }
 
     [Theory]
