@@ -184,6 +184,12 @@ internal sealed partial class RuleStore : IAsyncDisposable
                 }
                 catch (Exception ex) when (IsConfigurationFailure(ex))
                 {
+                    // I/O and access failures may recover without changing the rule
+                    // document (for example, a fixture mounted after the rules).
+                    // Retry at the existing polling cadence; deterministic
+                    // validation failures still coalesce by rejected hash.
+                    if (ex is IOException or UnauthorizedAccessException)
+                        _rejectedHash = null;
                     if (!_lastFailed)
                         ReloadFailed(_logger, Current.Version);
                     _lastFailed = true;

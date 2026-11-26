@@ -459,6 +459,52 @@ public sealed class ForwardingTests
         }
     }
 
+    [Fact]
+    public async Task MissingFixtureReloadRecoversWithoutAnotherRuleEdit()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var directory = Directory.CreateTempSubdirectory("mock-proxy-fixture-recovery-").FullName;
+        try
+        {
+            await using var upstream = await Upstream.StartAsync();
+            var rules = JsonNode.Parse("""
+                {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+                 "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
+                """)!;
+            rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+            var published = rules.ToJsonString();
+            using var capture = new CaptureProvider();
+            await using var gateway = await StartGatewayAsync(rules, upstream,
+                provider: () => System.Text.Json.JsonElement.Parse(Volatile.Read(ref published)),
+                capture: capture, configure: options => options.FixtureRoot = directory);
+            using var client = gateway.GetTestClient();
+            rules["services"]!["a"]!["default"] = JsonNode.Parse("""
+                {"mode":"mock","response":{"statusCode":200,"bodyFile":"late.txt","headers":{"Content-Type":"text/plain"}}}
+                """);
+            Volatile.Write(ref published, rules.ToJsonString());
+            await WaitForGatewayLogAsync(capture, "Gateway configuration reload rejected; retaining version 1.", "", ct);
+            using (var old = await client.GetAsync("/mock-proxy/a/check", ct))
+            {
+                Assert.Equal(HttpStatusCode.Created, old.StatusCode);
+                Assert.Equal("upstream", await old.Content.ReadAsStringAsync(ct));
+            }
+            Assert.Single(upstream.Requests);
+
+            // Only the temporarily missing operator-owned fixture becomes available.
+            await File.WriteAllTextAsync(Path.Combine(directory, "late.txt"), "fixture-ready", ct);
+            await WaitForGatewayLogAsync(capture, "Gateway configuration version 2 activated.", "", ct);
+            using var recovered = await client.GetAsync("/mock-proxy/a/check", ct);
+            Assert.Equal(HttpStatusCode.OK, recovered.StatusCode);
+            Assert.Equal("fixture-ready", await recovered.Content.ReadAsStringAsync(ct));
+            Assert.Equal("text/plain", recovered.Content.Headers.ContentType?.MediaType);
+            Assert.Single(upstream.Requests);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static async Task WaitForGatewayLogAsync(CaptureProvider capture, string required, string additional, CancellationToken ct)
     {
         var deadline = DateTime.UtcNow.AddSeconds(10);
@@ -798,6 +844,11 @@ public sealed class ForwardingTests
     [InlineData("$.items[?length(@.missing) == @.other]", false, 202, 0)]
     [InlineData("$.items[?length(@.name) == $.label]", false, 201, 1)]
     [InlineData("$.items[?length(@.name) != $.label]", true, 400, 0)]
+    [InlineData("$.items[?length(@.name) == length('é')]", false, 202, 0)]
+    [InlineData("$.items[?length(@.name) == length('😀')]", false, 201, 1)]
+    [InlineData("$.items[?length(@.missing) == length(@.other)]", false, 202, 0)]
+    [InlineData("$.items[?length(@.missing) != length(@.other)]", false, 201, 1)]
+    [InlineData("$.items[?length(@.name) == length($.label)]", true, 400, 0)]
     public async Task LengthFilterIsScalarCorrectAndBudgetedWithoutGlobalRegistration(string selector, bool large, int status, int calls)
     {
         Assert.True(Json.Path.FunctionRepository.TryGet("length", out var originalFunction));

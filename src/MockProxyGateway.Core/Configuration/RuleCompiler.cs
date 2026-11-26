@@ -354,7 +354,9 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             throw Invalid("Invalid fixture location.");
         var root = Path.GetFullPath(options.FixtureRoot, contentRoot);
         var file = new FileInfo(Path.GetFullPath(relative, root));
-        if (!file.Exists || file.Length > 4_194_304 || _mockBytes + file.Length > MaximumSnapshotBodyBytes ||
+        if (!file.Exists)
+            throw new FileNotFoundException("Fixture file is not available.");
+        if (file.Length > 4_194_304 || _mockBytes + file.Length > MaximumSnapshotBodyBytes ||
             file.Attributes.HasFlag(FileAttributes.ReparsePoint))
             throw Invalid("Invalid fixture file.");
         for (var directory = file.Directory; directory is not null; directory = directory.Parent)
@@ -369,7 +371,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
         var bytes = new byte[checked((int)stream.Length)];
         stream.ReadExactly(bytes);
         if (stream.ReadByte() != -1)
-            throw Invalid("Fixture changed during loading.");
+            throw new IOException("Fixture changed during loading.");
         return bytes;
     }
 

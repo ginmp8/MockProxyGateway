@@ -444,12 +444,15 @@ internal static class BoundedJsonPathFilter
             throw Invalid();
         JsonPath? expectedQuery = null;
         JsonElement expectedLiteral = default;
-        if (path[cursor] is '@' or '$')
+        (JsonPath? Query, int? Literal)? expectedLength = null;
+        if (Take(path, ref cursor, "length"))
+            expectedLength = ReadLengthArgument(path, ref cursor, ref usesRepeatedTraversal);
+        else if (path[cursor] is '@' or '$')
             expectedQuery = ReadSingularQuery(path, ref cursor, ref usesRepeatedTraversal);
         else
             expectedLiteral = ReadScalarLiteral(path, ref cursor);
         selector = new BoundedLengthFilterSelector(argument, literalLength, expectedQuery, expectedLiteral, comparison,
-            path[expressionStart..cursor]);
+            path[expressionStart..cursor], expectedLength);
         index = cursor;
         return true;
     }

@@ -8,7 +8,8 @@ namespace MockProxyGateway.Configuration;
 // A filter-local adapter over the library's normal wildcard selector. It
 // preserves the exact original candidate nodes and their locations, including
 // duplicates from selector unions, without modifying any host function registry.
-internal sealed class BoundedLengthFilterSelector(JsonPath? argument, int? literalLength, JsonPath? expectedQuery, JsonElement expectedLiteral, string comparison, string expression) : ISelector
+internal sealed class BoundedLengthFilterSelector(JsonPath? argument, int? literalLength, JsonPath? expectedQuery, JsonElement expectedLiteral, string comparison, string expression,
+    (JsonPath? Query, int? Literal)? expectedLength = null) : ISelector
 {
     private static readonly ISelector Children = JsonPath.Parse("$[*]").Segments[0].Selectors[0];
 
@@ -23,18 +24,13 @@ internal sealed class BoundedLengthFilterSelector(JsonPath? argument, int? liter
 
     internal bool MatchesCandidate(JsonNode? rootNode, JsonNode? candidate)
     {
-        var length = literalLength;
-        if (argument is not null)
+        var length = GetLength(argument, literalLength, rootNode, candidate);
+        if (expectedLength is { } other)
         {
-            var value = argument.Evaluate(argument.Scope == PathScope.Global ? rootNode : candidate)
-                .Matches.FirstOrDefault()?.Value;
-            length = value switch
-            {
-                JsonObject obj => obj.Count,
-                JsonArray arr => arr.Count,
-                JsonValue scalar when scalar.TryGetValue<string>(out var text) => ScalarCount(text),
-                _ => null
-            };
+            var right = GetLength(other.Query, other.Literal, rootNode, candidate);
+            if (length is null || right is null)
+                return length == right ? comparison is "==" or "<=" or ">=" : comparison == "!=";
+            return CompareNumbers(length.Value, right.Value);
         }
 
         var expected = expectedLiteral;
@@ -52,18 +48,34 @@ internal sealed class BoundedLengthFilterSelector(JsonPath? argument, int? liter
 
         if (length is not { } count || expected.ValueKind != JsonValueKind.Number)
             return comparison == "!=";
-        var number = RuleCompiler.Number(expected);
-        return comparison switch
+        return CompareNumbers(count, RuleCompiler.Number(expected));
+    }
+
+    private static int? GetLength(JsonPath? query, int? literal, JsonNode? rootNode, JsonNode? candidate)
+    {
+        if (query is null)
+            return literal;
+        var value = query.Evaluate(query.Scope == PathScope.Global ? rootNode : candidate)
+            .Matches.FirstOrDefault()?.Value;
+        return value switch
         {
-            "==" => count == number,
-            "!=" => count != number,
-            "<" => count < number,
-            ">" => count > number,
-            "<=" => count <= number,
-            ">=" => count >= number,
-            _ => throw new InvalidOperationException("Invalid length comparison.")
+            JsonObject obj => obj.Count,
+            JsonArray arr => arr.Count,
+            JsonValue scalar when scalar.TryGetValue<string>(out var text) => ScalarCount(text),
+            _ => null
         };
     }
+
+    private bool CompareNumbers(decimal count, decimal number) => comparison switch
+    {
+        "==" => count == number,
+        "!=" => count != number,
+        "<" => count < number,
+        ">" => count > number,
+        "<=" => count <= number,
+        ">=" => count >= number,
+        _ => throw new InvalidOperationException("Invalid length comparison.")
+    };
 
     internal static int ScalarCount(string text)
     {
