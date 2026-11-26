@@ -225,6 +225,9 @@ internal static class BoundedJsonPathFilter
             var rightStart = _index;
             if (comparison is not null)
             {
+                if (nestedPrivate is null && TryReadReversedLengthFilter(path, ref _index,
+                        path[leafStart..leftEnd].Trim(), comparison, out local, ref _usesRepeatedTraversal))
+                    return ((BoundedLengthFilterSelector)local!).MatchesCandidate;
                 var right = ReadOperand(path, ref _index, grouping, ref _usesRepeatedTraversal,
                     ref _maxUnionProduct, ref _hasNestedFilter, ref _hasRepeatedPredicateDescent, 0, ReadNestedPrivate);
                 if (!left.Comparable || !right.Comparable)
@@ -267,8 +270,6 @@ internal static class BoundedJsonPathFilter
                     else
                     {
                         expected = ReadComparisonLiteral(rightText);
-                        if (function == "count" && expected.ValueKind != JsonValueKind.Number)
-                            throw Invalid();
                     }
                 }
                 if (queryText[0] != '@' ||
@@ -426,21 +427,7 @@ internal static class BoundedJsonPathFilter
         var expressionStart = cursor;
         if (!Take(path, ref cursor, "length"))
             return false;
-        Require(path, ref cursor, "(");
-        SkipWhitespace(path, ref cursor);
-        if (cursor >= path.Length)
-            throw Invalid();
-        JsonPath? argument = null;
-        int? literalLength = null;
-        if (path[cursor] is '@' or '$')
-            argument = ReadSingularQuery(path, ref cursor, ref usesRepeatedTraversal);
-        else
-        {
-            var literal = ReadScalarLiteral(path, ref cursor);
-            if (literal.ValueKind == JsonValueKind.String)
-                literalLength = BoundedLengthFilterSelector.ScalarCount(literal.GetString()!);
-        }
-        Require(path, ref cursor, ")");
+        var (argument, literalLength) = ReadLengthArgument(path, ref cursor, ref usesRepeatedTraversal);
         string? comparison = null;
         foreach (var op in new[] { "==", "!=", "<=", ">=", "<", ">" })
         {
@@ -463,6 +450,62 @@ internal static class BoundedJsonPathFilter
             expectedLiteral = ReadScalarLiteral(path, ref cursor);
         selector = new BoundedLengthFilterSelector(argument, literalLength, expectedQuery, expectedLiteral, comparison,
             path[expressionStart..cursor]);
+        index = cursor;
+        return true;
+    }
+
+    private static (JsonPath? Argument, int? LiteralLength) ReadLengthArgument(string path, ref int cursor, ref bool usesRepeatedTraversal)
+    {
+        Require(path, ref cursor, "(");
+        SkipWhitespace(path, ref cursor);
+        if (cursor >= path.Length)
+            throw Invalid();
+        JsonPath? argument = null;
+        int? literalLength = null;
+        if (path[cursor] is '@' or '$')
+            argument = ReadSingularQuery(path, ref cursor, ref usesRepeatedTraversal);
+        else
+        {
+            var literal = ReadScalarLiteral(path, ref cursor);
+            if (literal.ValueKind == JsonValueKind.String)
+                literalLength = BoundedLengthFilterSelector.ScalarCount(literal.GetString()!);
+        }
+        Require(path, ref cursor, ")");
+        return (argument, literalLength);
+    }
+
+    private static bool TryReadReversedLengthFilter(string path, ref int index, string operand,
+        string comparison, out ISelector? selector, ref bool usesRepeatedTraversal)
+    {
+        selector = null;
+        var cursor = index;
+        if (!Take(path, ref cursor, "length"))
+            return false;
+
+        var operandCursor = 0;
+        JsonPath? expectedQuery = null;
+        JsonElement expectedLiteral = default;
+        if (operand.StartsWith('@') || operand.StartsWith('$'))
+            expectedQuery = ReadSingularQuery(operand, ref operandCursor, ref usesRepeatedTraversal);
+        else
+            expectedLiteral = ReadScalarLiteral(operand, ref operandCursor);
+        SkipWhitespace(operand, ref operandCursor);
+        if (operandCursor != operand.Length)
+            throw Invalid();
+
+        var (argument, literalLength) = ReadLengthArgument(path, ref cursor, ref usesRepeatedTraversal);
+        // The existing selector compares length against its operand. Reverse only
+        // the ordered operators; equality and Nothing semantics are symmetric.
+        var reversed = comparison switch
+        {
+            "<" => ">",
+            ">" => "<",
+            "<=" => ">=",
+            ">=" => "<=",
+            _ => comparison
+        };
+        selector = new BoundedLengthFilterSelector(argument, literalLength, expectedQuery, expectedLiteral, reversed,
+            operand + " " + comparison + " " + path[index..cursor].Trim());
         index = cursor;
         return true;
     }

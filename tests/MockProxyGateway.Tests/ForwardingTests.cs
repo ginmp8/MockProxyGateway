@@ -905,6 +905,13 @@ public sealed class ForwardingTests
     [InlineData("$.items[?@.name == value(@.nested[?match(@.name, '..')].name)]", false, 201, 1)]
     [InlineData("$.items[?@.missing == value(@.nested[?match(@.name, '..')].missing)]", false, 202, 0)]
     [InlineData("$.items[?1 <= count(@.nested[?match(@.name, '..')])]", true, 400, 0)]
+    [InlineData("$.items[?count(@.nested[?match(@.name, '..')]) == '1']", false, 201, 1)]
+    [InlineData("$.items[?count(@.nested[?match(@.name, '..')]) != '1']", false, 202, 0)]
+    [InlineData("$.items[?null != count(@.nested[?match(@.name, '..')])]", false, 202, 0)]
+    [InlineData("$.items[?true == count(@.nested[?match(@.name, '..')])]", false, 201, 1)]
+    [InlineData("$.items[?@.nested[?2 == length(@.name)]]", false, 202, 0)]
+    [InlineData("$.items[?@.nested[?1 == length(@.name)]]", false, 201, 1)]
+    [InlineData("$.items[?@.nested[?2 == length(@.name)]]", true, 400, 0)]
     public async Task NestedPrivateFilterUsesCandidateScopeAndFailsClosed(string selector, bool large, int status, int calls)
     {
         Assert.True(Json.Path.FunctionRepository.TryGet("length", out var length));
