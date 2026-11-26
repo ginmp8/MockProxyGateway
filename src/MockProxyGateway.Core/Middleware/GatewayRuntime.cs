@@ -174,8 +174,9 @@ internal sealed partial class GatewayRuntime : IDisposable
         {
             var version = _store.Current.Version;
             var correlation = Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
+            var duration = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             Completed(_logger, "unknown", "none", "none", status, version,
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds, correlation, category);
+                duration, correlation, category);
         }
     }
 

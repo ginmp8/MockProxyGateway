@@ -47,9 +47,29 @@ internal static partial class GatewayPaths
     {
         if (string.IsNullOrEmpty(rawPath))
             return new PathString(decodedPath).ToUriComponent();
+        var prefixEnd = prefix.Length;
         if (!StartsWithSegment(rawPath, prefix))
-            throw new RequestFailure(400);
-        var remainder = rawPath.Length == prefix.Length ? "/" : rawPath[prefix.Length..];
+        {
+            // Kestrel decodes safe percent escapes in the routing prefix and
+            // service alias. Find the corresponding raw segment boundary;
+            // never reconstruct or normalize the remaining wire path.
+            prefixEnd = 0;
+            foreach (var c in prefix)
+            {
+                if (c != '/')
+                    continue;
+                prefixEnd = rawPath.IndexOf('/', prefixEnd + 1);
+                if (prefixEnd < 0)
+                {
+                    prefixEnd = rawPath.Length;
+                    break;
+                }
+            }
+            if (!string.Equals(PathString.FromUriComponent(rawPath[..prefixEnd]).Value,
+                PathString.FromUriComponent(prefix).Value, StringComparison.Ordinal))
+                throw new RequestFailure(400);
+        }
+        var remainder = rawPath.Length == prefixEnd ? "/" : rawPath[prefixEnd..];
         if (!IsSafe(remainder) || !IsEscapedTargetPart(remainder, query: false) ||
             !string.Equals(PathString.FromUriComponent(remainder).Value, decodedPath, StringComparison.Ordinal))
             throw new RequestFailure(400);

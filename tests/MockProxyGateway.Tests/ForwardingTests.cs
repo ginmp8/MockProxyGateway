@@ -190,8 +190,12 @@ public sealed class ForwardingTests
         Assert.Equal(alternateCount + (scenario == "alternate" ? 1 : 0), alternate.Requests.Count);
     }
 
-    [Fact]
-    public async Task RawPathAndRemainingQueryEncodingReachRealUpstreamUnchanged()
+    [Theory]
+    [InlineData("/mock-proxy/a")]
+    [InlineData("/%6dock-proxy/a")]
+    [InlineData("/mock-proxy/%61")]
+    [InlineData("/%6dock-proxy/%61")]
+    public async Task RawPathAndRemainingQueryEncodingReachRealUpstreamUnchanged(string rawPrefix)
     {
         await using var upstream = await Upstream.StartAsync();
         var json = JsonNode.Parse("""
@@ -203,14 +207,21 @@ public sealed class ForwardingTests
         using var client = new HttpClient(new SocketsHttpHandler { UseProxy = false, AllowAutoRedirect = false });
         var ct = TestContext.Current.CancellationToken;
         var uri = new Uri(gateway.Urls.Single().TrimEnd('/') +
-            "/mock-proxy/a/%7e/%41%20b?x=a%2fb&x=%41+%20&simulate=ignore&y=1",
+            rawPrefix + "/%7e/%41%20b?x=a%2fb&x=%41+%20&simulate=ignore&y=1",
             new UriCreationOptions { DangerousDisablePathAndQueryCanonicalization = true });
         using var response = await client.GetAsync(uri, ct);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         Assert.Equal("/real/%7e/%41%20b?x=a%2fb&x=%41+%20&y=1", upstream.Requests.Last().Target);
 
+        var rootUri = new Uri(gateway.Urls.Single().TrimEnd('/') + rawPrefix,
+            new UriCreationOptions { DangerousDisablePathAndQueryCanonicalization = true });
+        using var rootResponse = await client.GetAsync(rootUri, ct);
+        Assert.Equal(HttpStatusCode.Created, rootResponse.StatusCode);
+        Assert.Equal("/real/", upstream.Requests.Last().Target);
+        Assert.Equal(2, upstream.Requests.Count);
+
         var count = upstream.Requests.Count;
-        var unsafeUri = new Uri(gateway.Urls.Single().TrimEnd('/') + "/mock-proxy/a/%2e%2e/escape",
+        var unsafeUri = new Uri(gateway.Urls.Single().TrimEnd('/') + rawPrefix + "/%2e%2e/escape",
             new UriCreationOptions { DangerousDisablePathAndQueryCanonicalization = true });
         using var blocked = await client.GetAsync(unsafeUri, ct);
         Assert.Equal(HttpStatusCode.BadRequest, blocked.StatusCode);
