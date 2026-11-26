@@ -736,6 +736,20 @@ public sealed class GatewayTests
     [InlineData("$.items[?length(@.name) == length('😀')].value", "{\"label\":\"é\",\"items\":[{\"name\":[null],\"value\":42}]}", 201)]
     [InlineData("$.items[?length(@.name) == length($.label)].value", "{\"label\":\"é\",\"items\":[{\"name\":\"é\",\"value\":42}]}", 201)]
     [InlineData("$.items[?@.nested[?length(@.name) == length(@.other)]].value", "{\"label\":\"é\",\"items\":[{\"nested\":[{\"name\":\"é\",\"other\":[1,2]}],\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(value(@.names[*])) == 2].value", "{\"items\":[{\"names\":[\"é\"],\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(value(@.names[*])) == 2].value", "{\"items\":[{\"names\":[\"é\",\"ab\"],\"value\":42}]}", 404)]
+    [InlineData("$.items[?length(value(@.names[*])) == @.missing].value", "{\"items\":[{\"names\":[],\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(value(@.names[*])) == null].value", "{\"items\":[{\"names\":[null],\"value\":42}]}", 404)]
+    [InlineData("$.items[?length(value(@.names[*])) == 2].value", "{\"items\":[{\"names\":[[1,2]],\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(value(@.names[*])) == 2].value", "{\"items\":[{\"names\":[{\"a\":1,\"b\":2}],\"value\":42}]}", 201)]
+    [InlineData("$.items[?1 == length(value(@.names[*]))].value", "{\"items\":[{\"names\":[\"😀\"],\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(value(@.names[*])) == length(value(@.other[*]))].value", "{\"items\":[{\"names\":[\"😀\"],\"other\":[[1]],\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(value($.labels[*])) == 1].value", "{\"labels\":[\"😀\"],\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?match(value(@.names[*]), '..')].value", "{\"items\":[{\"names\":[\"é\"],\"value\":42}]}", 201)]
+    [InlineData("$.items[?match(value(@.names[*]), '..')].value", "{\"items\":[{\"names\":[\"ab\",\"cd\"],\"value\":42}]}", 404)]
+    [InlineData("$.items[?search(value(@.names[*]), 'b')].value", "{\"items\":[{\"names\":[\"abc\"],\"value\":42}]}", 201)]
+    [InlineData("$.items[?!search(value(@.names[*]), 'b')].value", "{\"items\":[{\"names\":[null],\"value\":42}]}", 201)]
+    [InlineData("$.items[?search(value($.labels[*]), '.')].value", "{\"labels\":[\"😀\"],\"items\":[{\"value\":42}]}", 201)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """

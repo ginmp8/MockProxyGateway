@@ -433,6 +433,32 @@ internal static class BoundedJsonPathFilter
         return query;
     }
 
+    // Explicit conversion from a nodelist to ValueType. Admit bounded
+    // non-overlapping queries and precharge repeated whole-input work.
+    private static JsonPath ReadValueQuery(string path, ref int index, ref bool usesRepeatedTraversal)
+    {
+        Require(path, ref index, "(");
+        SkipWhitespace(path, ref index);
+        var start = index;
+        if (index >= path.Length || path[index] is not ('@' or '$'))
+            throw Invalid();
+        index++;
+        var repeated = false;
+        var unionProduct = 1;
+        var nested = false;
+        var repeatedDescent = false;
+        _ = ReadSegments(path, ref index, [], ref repeated, ref unionProduct,
+            ref nested, ref repeatedDescent, 0);
+        if (repeated || nested || unionProduct != 1 ||
+            !JsonPath.TryParse(path[start..index].Trim(), out var query,
+                new PathParsingOptions { AllowRelativePathStart = true }) ||
+            query.Segments.Length > 16)
+            throw Invalid();
+        Require(path, ref index, ")");
+        usesRepeatedTraversal = true;
+        return query;
+    }
+
     private static bool TryReadLengthFilter(string path, ref int index, out ISelector? selector, ref bool usesRepeatedTraversal)
     {
         selector = null;
@@ -479,7 +505,9 @@ internal static class BoundedJsonPathFilter
             throw Invalid();
         JsonPath? argument = null;
         int? literalLength = null;
-        if (path[cursor] is '@' or '$')
+        if (Take(path, ref cursor, "value"))
+            argument = ReadValueQuery(path, ref cursor, ref usesRepeatedTraversal);
+        else if (path[cursor] is '@' or '$')
             argument = ReadSingularQuery(path, ref cursor, ref usesRepeatedTraversal);
         else
         {
@@ -542,7 +570,9 @@ internal static class BoundedJsonPathFilter
             throw Invalid();
         JsonPath? argument = null;
         string? literalArgument = null;
-        if (path[cursor] is '@' or '$')
+        if (Take(path, ref cursor, "value"))
+            argument = ReadValueQuery(path, ref cursor, ref usesRepeatedTraversal);
+        else if (path[cursor] is '@' or '$')
             argument = ReadSingularQuery(path, ref cursor, ref usesRepeatedTraversal);
         else
         {

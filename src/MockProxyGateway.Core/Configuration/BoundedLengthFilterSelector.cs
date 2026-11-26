@@ -55,9 +55,10 @@ internal sealed class BoundedLengthFilterSelector(JsonPath? argument, int? liter
     {
         if (query is null)
             return literal;
-        var value = query.Evaluate(query.Scope == PathScope.Global ? rootNode : candidate)
-            .Matches.FirstOrDefault()?.Value;
-        return value switch
+        var matches = query.Evaluate(query.Scope == PathScope.Global ? rootNode : candidate).Matches;
+        if (matches.Count != 1)
+            return null;
+        return matches[0].Value switch
         {
             JsonObject obj => obj.Count,
             JsonArray arr => arr.Count,

@@ -26,9 +26,8 @@ internal sealed class BoundedRegexFilterSelector(JsonPath? argument, bool? liter
         if (literalResult is bool constant)
             return constant;
         var query = argument ?? throw Invalid();
-        var value = query.Evaluate(query.Scope == PathScope.Global ? rootNode : candidate)
-            .Matches.FirstOrDefault()?.Value;
-        return value is JsonValue scalar && scalar.TryGetValue<string>(out var text) && (regex ?? throw Invalid()).IsMatch(text);
+        var matches = query.Evaluate(query.Scope == PathScope.Global ? rootNode : candidate).Matches;
+        return matches.Count == 1 && matches[0].Value is JsonValue scalar && scalar.TryGetValue<string>(out var text) && (regex ?? throw Invalid()).IsMatch(text);
     }
 
     internal static CompiledPattern Compile(string pattern, bool fullMatch)
