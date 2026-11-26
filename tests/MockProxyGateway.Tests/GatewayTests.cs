@@ -807,6 +807,7 @@ public sealed class GatewayTests
     }
 
     [Theory]
+    [InlineData("X-Synthetic\n", "value")]
     [InlineData("Content-Length", "5")]
     [InlineData("Connection", "close")]
     [InlineData("X-Synthetic", "value\r\ninjected: yes")]
@@ -820,6 +821,39 @@ public sealed class GatewayTests
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
             await using var fixture = await Fixture.StartAsync(rules);
+        });
+    }
+
+    [Theory]
+    [InlineData("rule", "rule\n")]
+    [InlineData("service", "test\n")]
+    [InlineData("method", "GET\n")]
+    [InlineData("method", "PO\u017FT")]
+    public async Task InvalidIdentifierOrMethodCannotActivate(string field, string value)
+    {
+        var document = System.Text.Json.Nodes.JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{},"services":{"test":{"endpoints":[
+              {"method":"GET","path":"/check","rules":[
+                {"id":"rule","priority":1,"conditions":{"source":"header","key":"X-Scenario","operator":"exists"},
+                 "action":{"mode":"mock","response":{"statusCode":201}}}
+              ]}
+            ]}}}
+            """)!;
+        var services = document["services"]!.AsObject();
+        var service = services["test"]!;
+        var endpoint = service["endpoints"]![0]!;
+        if (field == "service")
+        {
+            services.Remove("test");
+            services.Add(value, service);
+        }
+        else if (field == "method")
+            endpoint["method"] = value;
+        else
+            endpoint["rules"]![0]!["id"] = value;
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await using var fixture = await Fixture.StartAsync(document.ToJsonString());
         });
     }
 

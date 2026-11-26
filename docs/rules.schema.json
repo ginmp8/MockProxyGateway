@@ -12,7 +12,7 @@
       "type": "object",
       "propertyNames": {
         "type": "string",
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}(?![\\s\\S])"
       },
       "additionalProperties": {
         "$ref": "#/$defs/destination"
@@ -23,7 +23,7 @@
       "type": "object",
       "propertyNames": {
         "type": "string",
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}(?![\\s\\S])"
       },
       "additionalProperties": {
         "$ref": "#/$defs/service"
@@ -67,6 +67,9 @@
         },
         "headers": {
           "type": "object",
+          "propertyNames": {
+            "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+(?![\\s\\S])"
+          },
           "additionalProperties": {
             "type": "string"
           }
@@ -231,7 +234,7 @@
             },
             "destination": {
               "type": "string",
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}(?![\\s\\S])"
             },
             "pathRewrite": {
               "type": "string",
@@ -460,7 +463,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}(?![\\s\\S])"
         },
         "enabled": {
           "type": "boolean"
@@ -492,7 +495,7 @@
       "properties": {
         "method": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+(?![\\s\\S])"
         },
         "path": {
           "type": "string",

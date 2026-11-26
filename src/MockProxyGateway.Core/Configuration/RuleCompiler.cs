@@ -48,9 +48,10 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             foreach (var endpoint in Items(service, "endpoints"))
             {
                 Only(endpoint, "method", "path", "default", "rules");
-                var method = Text(endpoint, "method").ToUpperInvariant();
+                var method = Text(endpoint, "method");
                 if (!GatewayPaths.HttpToken().IsMatch(method))
                     throw Invalid("Invalid endpoint method.");
+                method = method.ToUpperInvariant();
                 var pattern = new RoutePattern(Text(endpoint, "path"));
                 if (!shapes.Add(method + " " + pattern.Shape))
                     throw Invalid("Duplicate or ambiguous endpoint.");

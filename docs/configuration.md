@@ -65,6 +65,9 @@ There is no cross-replica synchronization or administrative write endpoint.
 See [the JSON Schema](rules.schema.json) and [complete example](../examples/mock-proxy-gateway.json).
 The runtime additionally validates typed operands, numeric precision, duplicate
 identifiers, resource limits, destination permissions, and fixture paths.
+Identifiers and HTTP tokens must match the entire original string: trailing
+line breaks are invalid, and endpoint methods are validated as ASCII tokens
+before case normalization. Mock response header names must be HTTP tokens.
 All strings in the rule document, including nested operands and raw mock bodies,
 must decode as valid Unicode. Explicit JSON null is preserved in body values
 and typed operands; optional string metadata such as quantifier and pathRewrite

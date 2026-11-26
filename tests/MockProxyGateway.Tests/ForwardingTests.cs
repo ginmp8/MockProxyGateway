@@ -460,13 +460,14 @@ public sealed class ForwardingTests
     }
 
     [Theory]
-    [InlineData("2030-01-01T00:00:00Z", "\"\\ud800\"", "\"any\"")]
-    [InlineData("2030-01-01T00:00:00Z", "\"\\udc00\"", "\"any\"")]
-    [InlineData("2030-01-01T00:00:00Z", "null", "null")]
-    [InlineData("01/01/2030 00:00:00Z", "null", "\"any\"")]
-    [InlineData("2030-01-01T00:00Z", "null", "\"any\"")]
+    [InlineData("2030-01-01T00:00:00Z", "\"\\ud800\"", "\"any\"", "temporary")]
+    [InlineData("2030-01-01T00:00:00Z", "\"\\udc00\"", "\"any\"", "temporary")]
+    [InlineData("2030-01-01T00:00:00Z", "null", "null", "temporary")]
+    [InlineData("01/01/2030 00:00:00Z", "null", "\"any\"", "temporary")]
+    [InlineData("2030-01-01T00:00Z", "null", "\"any\"", "temporary")]
+    [InlineData("2030-01-01T00:00:00Z", "null", "\"any\"", "temporary\n")]
     public async Task InvalidTypedRuleReloadRetainsLastGoodAndAcceptsCorrectedDocument(
-        string expiry, string payload, string quantifier)
+        string expiry, string payload, string quantifier, string ruleId)
     {
         var ct = TestContext.Current.CancellationToken;
         await using var upstream = await Upstream.StartAsync();
@@ -489,7 +490,8 @@ public sealed class ForwardingTests
             """;
         Volatile.Write(ref published, candidate.Replace("EXPIRY", expiry, StringComparison.Ordinal)
             .Replace("PAYLOAD", payload, StringComparison.Ordinal)
-            .Replace("QUANTIFIER", quantifier, StringComparison.Ordinal));
+            .Replace("QUANTIFIER", quantifier, StringComparison.Ordinal)
+            .Replace("\"temporary\"", System.Text.Json.JsonSerializer.Serialize(ruleId), StringComparison.Ordinal));
         await WaitForGatewayLogAsync(capture, "Gateway configuration reload rejected; retaining version 1.", "", ct);
         using (var retained = await client.GetAsync("/mock-proxy/a/check", ct))
         {

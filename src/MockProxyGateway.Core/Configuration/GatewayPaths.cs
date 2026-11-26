@@ -76,9 +76,9 @@ internal static partial class GatewayPaths
         return remainder;
     }
 
-    [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("\\A[A-Za-z0-9][A-Za-z0-9_-]{0,127}\\z", RegexOptions.CultureInvariant)]
     internal static partial Regex Identifier();
-    [GeneratedRegex("^[!#$%&'*+.^_\u0060|~0-9A-Za-z-]+$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("\\A[!#$%&'*+.^_\u0060|~0-9A-Za-z-]+\\z", RegexOptions.CultureInvariant)]
     internal static partial Regex HttpToken();
 }
 
