@@ -225,7 +225,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             if (hasFilter)
             {
                 var normalized = BoundedJsonPathFilter.Normalize(key, out var predicateRepeatedTraversal,
-                    out var predicateUnionProduct, out var hasNestedFilter, out var hasRepeatedPredicateDescent, out var localFilters);
+                    out var predicateUnionProduct, out var hasNestedFilter, out var hasRepeatedPredicateDescent, out var usesPrivateValueQuery, out var localFilters);
                 // Two outer descents can repeat filter candidates; two
                 // predicate descents can repeat traversal per candidate.
                 // Either requires a cubic whole-input bound. Combining both
@@ -242,7 +242,8 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 // outer filters. Never rely on nested root scoping.
                 if (hasNestedFilter && (predicateRepeatedTraversal || recursive || predicateUnionProduct != 1))
                     throw Invalid("Nested JSONPath filters require relative non-recursive predicates without predicate unions.");
-                hasRepeatedTraversal = predicateRepeatedTraversal || recursive || hasNestedFilter;
+                // Retain the same quadratic charge for private value conversions.
+                hasRepeatedTraversal = predicateRepeatedTraversal || recursive || hasNestedFilter || usesPrivateValueQuery;
                 if (predicateUnionProduct > 4 / pathMultiplier)
                     throw Invalid("JSONPath predicate union complexity limit exceeded.");
                 pathMultiplier *= predicateUnionProduct;
