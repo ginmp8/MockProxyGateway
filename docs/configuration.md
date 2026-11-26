@@ -55,7 +55,10 @@ Registering DI alone is inert, including in Production.
   The callback must be thread-safe, fast and host-owned. Exceptions reject a candidate
   and retain the last good snapshot; no request data may select a provider or file.
 
-Every source compiles through the same validator. An invalid enabled startup fails.
+Every source compiles through the same validator. Serialized documents must be
+valid Unicode and fit the 4 MiB UTF-8 document limit before parsing, including
+leading/trailing whitespace in explicit configuration sources. Unpaired UTF-16
+surrogates are rejected, never silently replaced with U+FFFD. An invalid enabled startup fails.
 Invalid reload retains the prior snapshot; rejected unchanged semantic-validation candidates are coalesced. Transient I/O or access failures retry at the existing polling cadence without repeated failure logs.
 Use atomic replacement (write a new file then rename it into place), especially on
 mounted files. The runtime captures fixture bytes with the rule snapshot; edit the
@@ -254,7 +257,12 @@ host normalization moves their decoded path outside the prefix.
 
 The YARP logger used by this gateway is isolated; structured gateway diagnostics
 report service, rule, action, status, version, duration, correlation and failure
-category without payloads. Host HTTP logging, .NET tracing and other observability
+category without payloads. A forwarding timeout before response headers is
+classified as `proxy-timeout`; request cancellation as `cancelled`; cancellation
+during body copying as `proxy-body-cancelled` (without guessing whether the client
+or an activity timeout caused it); other forwarding failures as `proxy-transport`.
+A real upstream HTTP 502/504 is a completed exchange, not a gateway transport
+failure. Host HTTP logging, .NET tracing and other observability
 exporters remain the host's responsibility.
 
 ## Local example (synthetic loopback only)

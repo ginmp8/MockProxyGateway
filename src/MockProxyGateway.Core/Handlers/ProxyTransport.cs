@@ -47,19 +47,28 @@ internal sealed class ProxyTransport : IDisposable
         });
     }
 
-    internal async Task<bool> ForwardAsync(HttpContext context, Destination destination, string path)
+    internal async Task<string> ForwardAsync(HttpContext context, Destination destination, string path)
     {
         if (!ProxyDestinationPolicy.IsValid(destination.BaseUri, _options))
         {
             context.Response.StatusCode = StatusCodes.Status502BadGateway;
-            return false;
+            return "proxy-transport";
         }
         var target = BuildTarget(context, destination, path);
         var configuration = new ForwarderRequestConfig { ActivityTimeout = TimeSpan.FromSeconds(_options.ProxyTimeoutSeconds) };
         var error = await _forwarder.SendAsync(context, destination.BaseUri.AbsoluteUri, _client, configuration,
             new GatewayTransformer(target)).ConfigureAwait(false);
         // YARP handles transport failures. Never resolve or execute another action.
-        return error == ForwarderError.None;
+        // Classify the actual forwarding result, not an upstream's HTTP status.
+        // A legitimate upstream 504 is a completed HTTP exchange.
+        return error switch
+        {
+            ForwarderError.None => "completed",
+            ForwarderError.RequestTimedOut => "proxy-timeout",
+            ForwarderError.RequestCanceled => "cancelled",
+            ForwarderError.RequestBodyCanceled or ForwarderError.ResponseBodyCanceled => "proxy-body-cancelled",
+            _ => "proxy-transport"
+        };
     }
 
     private async ValueTask<Stream> ConnectAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)

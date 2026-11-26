@@ -623,6 +623,73 @@ public sealed class ForwardingTests
         }
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task InvalidSerializedRuleTextCannotReplaceActiveMockWithProxy(bool external, bool oversized)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var upstream = await Upstream.StartAsync();
+        using var capture = new CaptureProvider();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"mock","response":{"statusCode":200,"text":"selected"}}},
+             "unused":{"default":{"mode":"mock","response":{"statusCode":200,"text":"VALUE"}}}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        var builder = TestHosting.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Logging.AddProvider(capture);
+        builder.Logging.SetMinimumLevel(LogLevel.Information);
+        var key = external ? "RulesJson" : "MockProxyGateway:RulesJson";
+        IConfiguration source = external
+            ? new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { [key] = rules.ToJsonString() }).Build()
+            : builder.Configuration;
+        source[key] = rules.ToJsonString();
+        void Configure(GatewayOptions options)
+        {
+            options.AllowLoopbackForTests = true;
+            options.AllowedDestinationAuthorities = [new Uri(upstream.BaseUrl).Authority];
+        }
+        if (external)
+            builder.Services.AddMockProxyGateway(source, Configure);
+        else
+        {
+            builder.Configuration["MockProxyGateway:RuleSource"] = "Configuration";
+            builder.Services.AddMockProxyGateway(Configure);
+        }
+        await using var gateway = builder.Build();
+        gateway.UseMockProxyGateway();
+        await gateway.StartAsync(ct);
+        using var client = gateway.GetTestClient();
+        Assert.Equal("selected", await client.GetStringAsync("/mock-proxy/a/check", ct));
+        Assert.Empty(upstream.Requests);
+
+        rules["services"]!["a"]!["default"] = JsonNode.Parse("""
+            {"mode":"proxy","destination":"real"}
+            """);
+        var candidate = rules.ToJsonString();
+        source[key] = oversized
+            ? new string(' ', 4_194_304) + candidate
+            : candidate.Replace("VALUE", new string('\uD800', 1), StringComparison.Ordinal);
+        await WaitForGatewayLogAsync(capture, "Gateway configuration reload rejected; retaining version 1.", "", ct);
+        Assert.Equal("selected", await client.GetStringAsync("/mock-proxy/a/check", ct));
+        Assert.Empty(upstream.Requests);
+
+        // A genuine replacement character is valid Unicode and must not be
+        // confused with an invalid surrogate that was silently repaired.
+        source[key] = candidate.Replace("VALUE", "\uFFFD", StringComparison.Ordinal);
+        await WaitForGatewayLogAsync(capture, "Gateway configuration version 2 activated.", "", ct);
+        using var proxy = await client.GetAsync("/mock-proxy/a/check", ct);
+        Assert.Equal(HttpStatusCode.Created, proxy.StatusCode);
+        Assert.Equal("upstream", await proxy.Content.ReadAsStringAsync(ct));
+        Assert.Equal("/check", Assert.Single(upstream.Requests).Target);
+        Assert.Equal("\uFFFD", await client.GetStringAsync("/mock-proxy/unused/check", ct));
+        Assert.Single(upstream.Requests);
+    }
+
     [Fact]
     public async Task AmbiguousSerializedRuleReloadCannotReplaceActiveMockWithProxy()
     {
@@ -832,9 +899,11 @@ public sealed class ForwardingTests
     }
 
     [Theory]
-    [InlineData("abort", 502)]
-    [InlineData("timeout", 504)]
-    public async Task FailedMutationIsNotRetriedOrReplacedWithMock(string failure, int status)
+    [InlineData("abort", 502, "proxy-transport")]
+    [InlineData("timeout", 504, "proxy-timeout")]
+    [InlineData("upstream-502", 502, "completed")]
+    [InlineData("upstream-504", 504, "completed")]
+    public async Task FailedMutationIsNotRetriedOrReplacedWithMock(string failure, int status, string category)
     {
         var calls = 0;
         await using var upstream = await Upstream.StartAsync(async context =>
@@ -843,8 +912,10 @@ public sealed class ForwardingTests
             Interlocked.Increment(ref calls);
             if (failure == "abort")
                 context.Abort();
-            else
+            else if (failure == "timeout")
                 await Task.Delay(TimeSpan.FromSeconds(10), context.RequestAborted);
+            else
+                context.Response.StatusCode = status;
         });
         var json = JsonNode.Parse("""
             {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
@@ -853,11 +924,61 @@ public sealed class ForwardingTests
              ]}}}
             """)!;
         json["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
-        await using var gateway = await StartGatewayAsync(json, upstream, configure: o => o.ProxyTimeoutSeconds = 1);
+        using var capture = new CaptureProvider();
+        await using var gateway = await StartGatewayAsync(json, upstream, capture: capture, configure: o => o.ProxyTimeoutSeconds = 1);
         using var client = gateway.GetTestClient();
-        using var request = CreateRequest("POST", "/mock-proxy/a/mutate", Body);
-        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var request = CreateRequest("POST", "/mock-proxy/a/mutate?secret=synthetic-failure-query", Body);
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer synthetic-failure-token");
+        var ct = TestContext.Current.CancellationToken;
+        using var response = await client.SendAsync(request, ct);
         Assert.Equal((HttpStatusCode)status, response.StatusCode);
+        await WaitForGatewayLogAsync(capture, "action=proxy status=" + status.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "category=" + category, ct);
+        Assert.DoesNotContain(capture.Messages, x => x.Category.StartsWith("MockProxyGateway.", StringComparison.Ordinal) &&
+            x.Message.Contains("synthetic-failure-", StringComparison.Ordinal));
+        Assert.Equal(1, Volatile.Read(ref calls));
+    }
+
+    [Fact]
+    public async Task CancelledProxyIsDiagnosedWithoutRetryOrFallback()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var aborted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        await using var upstream = await Upstream.StartAsync(async context =>
+        {
+            Interlocked.Increment(ref calls);
+            entered.TrySetResult();
+            try { await Task.Delay(TimeSpan.FromSeconds(20), context.RequestAborted); }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                aborted.TrySetResult();
+            }
+        });
+        var json = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"mock","response":{"statusCode":200}},"endpoints":[
+              {"method":"GET","path":"/wait","default":{"mode":"proxy","destination":"real"}}
+             ]}}}
+            """)!;
+        json["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        using var capture = new CaptureProvider();
+        await using var gateway = await StartGatewayAsync(json, upstream, realServer: true, capture: capture);
+        using var client = new HttpClient { BaseAddress = new Uri(gateway.Urls.Single()) };
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var pending = client.GetAsync("/mock-proxy/a/wait", cancel.Token);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+        }
+        finally
+        {
+            await cancel.CancelAsync();
+        }
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        await aborted.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+        await WaitForGatewayLogAsync(capture, "action=proxy", "category=cancelled", ct);
         Assert.Equal(1, Volatile.Read(ref calls));
     }
 

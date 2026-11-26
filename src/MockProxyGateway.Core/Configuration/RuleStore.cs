@@ -12,6 +12,7 @@ namespace MockProxyGateway.Configuration;
 internal sealed partial class RuleStore : IAsyncDisposable
 {
     private const int MaximumDocumentBytes = 4_194_304;
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
     private readonly GatewayOptions _options;
     private readonly IHostEnvironment _environment;
     private readonly IConfiguration _configuration;
@@ -74,7 +75,7 @@ internal sealed partial class RuleStore : IAsyncDisposable
                 throw new InvalidOperationException("Serialized rules must be a single scalar document.");
             var json = (_hasExplicitSerialized ? _explicitSerialized : serialized.Value) ??
                 throw new InvalidOperationException("Complete serialized rule document required.");
-            bytes = Encoding.UTF8.GetBytes(json);
+            bytes = EncodeDocument(json);
         }
         else if (string.Equals(_options.RuleSource, "File", StringComparison.OrdinalIgnoreCase))
         {
@@ -97,11 +98,21 @@ internal sealed partial class RuleStore : IAsyncDisposable
         return bytes;
     }
 
+    // Validate serialized documents before allocating or parsing them. In
+    // particular, never silently replace unpaired UTF-16 surrogates, or let a
+    // provider hide an oversized document behind a parsed value's raw text.
+    internal static byte[] EncodeDocument(string json)
+    {
+        if (json.Length > MaximumDocumentBytes || StrictUtf8.GetByteCount(json) > MaximumDocumentBytes)
+            throw new InvalidOperationException("Rule document too large.");
+        return StrictUtf8.GetBytes(json);
+    }
+
     private byte[] ReadProgrammatic()
     {
         try
         {
-            return Encoding.UTF8.GetBytes(_options.ProgrammaticRules!().GetRawText());
+            return EncodeDocument(_options.ProgrammaticRules!().GetRawText());
         }
         catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or AccessViolationException))
         {
@@ -143,7 +154,7 @@ internal sealed partial class RuleStore : IAsyncDisposable
         RuleCompiler.ValidateJsonTree(document.RootElement);
         var gateway = FindProperty(document.RootElement, "MockProxyGateway");
         var rules = FindProperty(gateway, "Rules");
-        return Encoding.UTF8.GetBytes(rules.GetRawText());
+        return EncodeDocument(rules.GetRawText());
     }
 
     private static JsonElement FindProperty(JsonElement parent, string key)

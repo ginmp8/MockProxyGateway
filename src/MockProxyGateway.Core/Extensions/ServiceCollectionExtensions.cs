@@ -50,8 +50,8 @@ public static class MockProxyGatewayServiceCollectionExtensions
                     ruleConfiguration.GetChildren().Any(x => !string.Equals(x.Key, "RulesJson", StringComparison.OrdinalIgnoreCase)) ||
                     ruleConfiguration.GetSection("RulesJson").GetChildren().Any())
                     throw new InvalidOperationException("Conflicting supplied rule sources.");
-                return JsonElement.Parse(sectionValue ?? documentValue ??
-                    throw new InvalidOperationException("A complete serialized rule document is required."));
+                return JsonElement.Parse(RuleStore.EncodeDocument(sectionValue ?? documentValue ??
+                    throw new InvalidOperationException("A complete serialized rule document is required.")));
             };
         });
     }

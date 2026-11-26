@@ -312,6 +312,41 @@ public sealed class ConfigurationTests
         }
     }
 
+    [Theory]
+    [InlineData("Configuration", false)]
+    [InlineData("Configuration", true)]
+    [InlineData("Explicit", false)]
+    [InlineData("Explicit", true)]
+    [InlineData("External", false)]
+    [InlineData("External", true)]
+    public async Task SerializedRuleSourcesRejectInvalidUnicodeAndOversizedDocuments(string source, bool oversized)
+    {
+        const string valid = """
+            {"schemaVersion":1,"destinations":{},"services":{"demo":{"default":{"mode":"mock","response":{"statusCode":200,"text":"VALUE"}}}}}
+            """;
+        var invalid = oversized
+            ? new string(' ', 4_194_304) + valid
+            : valid.Replace("VALUE", new string('\uD800', 1), StringComparison.Ordinal);
+        var builder = TestHosting.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        if (source == "External")
+        {
+            var external = new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?> { ["RulesJson"] = invalid }).Build();
+            builder.Services.AddMockProxyGateway(external);
+        }
+        else if (source == "Explicit")
+            builder.Services.AddMockProxyGateway(o => { o.RuleSource = "Configuration"; o.RulesJson = invalid; });
+        else
+        {
+            builder.Configuration["MockProxyGateway:RuleSource"] = "Configuration";
+            builder.Configuration["MockProxyGateway:RulesJson"] = invalid;
+            builder.Services.AddMockProxyGateway();
+        }
+        await using var app = builder.Build();
+        Assert.Throws<InvalidOperationException>(() => app.UseMockProxyGateway());
+    }
+
     [Fact]
     public async Task ExplicitSerializedRulesRemainAuthoritativeEvenWhenInitialValueEqualsHostValue()
     {

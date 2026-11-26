@@ -122,9 +122,8 @@ internal sealed partial class GatewayRuntime : IDisposable
                 var escapedPath = selected.Action.PathRewrite is { } rewrite
                     ? rewrite
                     : GatewayPaths.GetForwardPath(rawPath, escapedPrefix, path);
-                if (!await _transport.ForwardAsync(context,
-                    snapshot.Destinations[selected.Action.Destination!], escapedPath).ConfigureAwait(false))
-                    category = "proxy-transport";
+                category = await _transport.ForwardAsync(context,
+                    snapshot.Destinations[selected.Action.Destination!], escapedPath).ConfigureAwait(false);
             }
         }
         catch (RequestFailure failure)
