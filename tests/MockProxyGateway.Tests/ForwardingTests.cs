@@ -1739,6 +1739,44 @@ public sealed class ForwardingTests
         Assert.Empty(upstream.Requests);
     }
 
+    // RFC 9535 orders strings by Unicode scalar value, not UTF-16 code units.
+    // U+E000 is less than U+10000 even though its UTF-16 code unit is greater
+    // than the first surrogate of U+10000.
+    [Theory]
+    [InlineData("$.items[?@.low < @.high]", 202, 0)]
+    [InlineData("$.items[?@.high > @.low]", 202, 0)]
+    [InlineData("$.items[?@.low <= @.high]", 202, 0)]
+    [InlineData("$.items[?@.high >= @.low]", 202, 0)]
+    [InlineData("$.items[?@.high < @.low]", 201, 1)]
+    [InlineData("$.items[?@.low > @.high]", 201, 1)]
+    [InlineData("$.items[?@.absent < @.missing]", 201, 1)]
+    [InlineData("$.items[?@.absent > @.missing]", 201, 1)]
+    [InlineData("$.items[?@.absent <= @.missing]", 202, 0)]
+    [InlineData("$.items[?value(@.low) < $.high]", 202, 0)]
+    [InlineData("$.items[?@.nested[?@.low < @.high]]", 202, 0)]
+    public async Task OrderedJsonPathComparisonsUseScalarOrderAndNothingSemantics(string selector, int status, int calls)
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"scalar-order","priority":1,"conditions":{"source":"body","key":"$.items","operator":"exists"},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        rules["services"]!["a"]!["rules"]![0]!["conditions"]!["key"] = selector;
+        await using var gateway = await StartGatewayAsync(rules, upstream);
+        using var client = gateway.GetTestClient();
+        const string payload = """{"high":"\uD800\uDC00","items":[{"low":"\uE000","high":"\uD800\uDC00","nested":[{"low":"\uE000","high":"\uD800\uDC00"}]}]}""";
+        using var body = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync("/mock-proxy/a/check", body, TestContext.Current.CancellationToken);
+        Assert.Equal((HttpStatusCode)status, response.StatusCode);
+        Assert.Equal(calls, upstream.Requests.Count);
+        if (calls == 1)
+            Assert.Equal(payload, Assert.Single(upstream.Requests).Body);
+    }
+
     [Theory]
     [InlineData("$.items[?@.score >= 10]")]
     [InlineData("$.items[?@.score >= $.min]")]
