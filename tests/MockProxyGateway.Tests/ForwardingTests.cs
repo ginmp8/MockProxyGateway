@@ -115,9 +115,11 @@ public sealed class ForwardingTests
     }
 
     [Theory]
-    [InlineData("default", "/primary/resource?simulate=remove&business=keep")]
-    [InlineData("alternate", "/alternate/resource?business=keep")]
-    public async Task AllEndToEndHeadersReachSelectedUpstreamWithoutConfiguration(string scenario, string expectedTarget)
+    [InlineData("default", "/primary/resource?simulate=remove&business=keep", false)]
+    [InlineData("alternate", "/alternate/resource?business=keep", false)]
+    [InlineData("default", "/primary/resource?simulate=remove&business=keep", true)]
+    [InlineData("alternate", "/alternate/resource?business=keep", true)]
+    public async Task AllEndToEndHeadersReachSelectedUpstreamWithoutConfiguration(string scenario, string expectedTarget, bool inspect)
     {
         await using var upstream = await Upstream.StartAsync();
         await using var alternate = await Upstream.StartAsync();
@@ -125,6 +127,10 @@ public sealed class ForwardingTests
             {"schemaVersion":1,"destinations":{"primary":{"baseUrl":"http://127.0.0.1/"},
               "alternate":{"baseUrl":"http://127.0.0.1/","removeQuery":["simulate"]}},
               "services":{"a":{"default":{"mode":"proxy","destination":"primary"},"rules":[
+                {"id":"inspect","priority":2,"conditions":{"all":[
+                  {"source":"header","key":"X-Inspect","operator":"equals","value":"true"},
+                  {"source":"body","key":"$.forceMock","operator":"equals","value":true}]},
+                 "action":{"mode":"mock","response":{"statusCode":202}}},
                 {"id":"alternate","priority":1,"conditions":{"source":"header","key":"X-Test-Scenario","operator":"equals","value":"alternate"},
                  "action":{"mode":"proxy","destination":"alternate"}},
                 {"id":"mock","priority":1,"conditions":{"source":"header","key":"X-Test-Scenario","operator":"equals","value":"mock"},
@@ -136,7 +142,9 @@ public sealed class ForwardingTests
             options.AllowedDestinationAuthorities = [new Uri(upstream.BaseUrl).Authority, new Uri(alternate.BaseUrl).Authority]);
         using var client = gateway.GetTestClient();
         var ct = TestContext.Current.CancellationToken;
-        using var request = CreateRequest("GET", "/mock-proxy/a/resource?simulate=remove&business=keep", null, scenario);
+        const string payload = "{\r\n \"forceMock\" : false, \"name\" : \"café\", \"escaped\" : \"a\\/b\" }\n";
+        using var request = CreateRequest(inspect ? "POST" : "GET", "/mock-proxy/a/resource?simulate=remove&business=keep",
+            inspect ? payload : null, scenario);
         var expected = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["Authorization"] = "Bearer synthetic-token",
@@ -152,6 +160,8 @@ public sealed class ForwardingTests
             ["X-Forwarded-Prefix"] = "/original",
             ["Forwarded"] = "for=192.0.2.1;proto=https"
         };
+        if (inspect)
+            expected.Add("X-Inspect", "true");
         foreach (var header in expected)
             Assert.True(request.Headers.TryAddWithoutValidation(header.Key, header.Value));
         Assert.True(request.Headers.TryAddWithoutValidation("X-Multiple", MultipleHeaderValues));
@@ -166,6 +176,10 @@ public sealed class ForwardingTests
         var actual = Assert.Single(selected.Requests);
         Assert.Empty(unselected.Requests);
         Assert.Equal(expectedTarget, actual.Target);
+        Assert.Equal(inspect ? "POST" : "GET", actual.Method);
+        Assert.Equal(inspect ? payload : "", actual.Body);
+        Assert.Equal("from-upstream", response.Headers.GetValues("X-Upstream").Single());
+        Assert.Equal("upstream", await response.Content.ReadAsStringAsync(ct));
         foreach (var header in expected)
             Assert.Equal(header.Value, actual.Headers[header.Key]);
         Assert.Equal(scenario, actual.Scenario);
@@ -180,6 +194,22 @@ public sealed class ForwardingTests
         Assert.Equal(HttpStatusCode.OK, mockResponse.StatusCode);
         Assert.Single(selected.Requests);
         Assert.Empty(unselected.Requests);
+
+        if (inspect)
+        {
+            using var bodyMock = CreateRequest("POST", "/mock-proxy/a/resource", """{"forceMock":true}""", scenario);
+            bodyMock.Headers.Add("X-Inspect", "true");
+            bodyMock.Headers.Add("Authorization", "Bearer synthetic-token");
+            using var bodyMockResponse = await client.SendAsync(bodyMock, ct);
+            Assert.Equal(HttpStatusCode.Accepted, bodyMockResponse.StatusCode);
+            using var malformed = CreateRequest("POST", "/mock-proxy/a/resource", "{", scenario);
+            malformed.Headers.Add("X-Inspect", "true");
+            malformed.Headers.Add("Authorization", "Bearer synthetic-token");
+            using var malformedResponse = await client.SendAsync(malformed, ct);
+            Assert.Equal(HttpStatusCode.BadRequest, malformedResponse.StatusCode);
+            Assert.Single(selected.Requests);
+            Assert.Empty(unselected.Requests);
+        }
 
         var primaryCount = upstream.Requests.Count;
         var alternateCount = alternate.Requests.Count;
@@ -1794,6 +1824,13 @@ public sealed class ForwardingTests
     [InlineData("$.items[?count($.expected[*]) == count($.nested[?@ == true])]", "{\"items\":[0],\"nested\":[true,false],\"expected\":[0]}", 202, 0, false)]
     [InlineData("$.items[?count($.expected[*]) == count($.nested[?@ == true])]", "{\"items\":[0],\"nested\":[true,false],\"expected\":[]}", 201, 1, false)]
     [InlineData("$.items[?count($.expected[*]) == count($.nested[?@ == true])]", "{}", 400, 0, true)]
+    [InlineData("$.items[?count(@.nested[?match(@, 'x')]) == length($.label)]", "{\"label\":\"😀\",\"items\":[{\"nested\":[\"x\"],\"value\":42}]}", 202, 0, false)]
+    [InlineData("$.items[?count(@.nested[?match(@, 'x')]) == length($.label)]", "{\"label\":\"ab\",\"items\":[{\"nested\":[\"x\"],\"value\":42}]}", 201, 1, false)]
+    [InlineData("$.items[?length(value($.labels[*])) == count(@.nested[?match(@, 'x')])]", "{\"labels\":[\"😀\"],\"items\":[{\"nested\":[\"x\"],\"value\":42}]}", 202, 0, false)]
+    [InlineData("$.items[?length(value($.labels[*])) == count(@.nested[?match(@, 'x')])]", "{\"labels\":[\"a\",\"b\"],\"items\":[{\"nested\":[\"x\"],\"value\":42}]}", 201, 1, false)]
+    [InlineData("$.items[?value(@.nested[?@ == null && $.enabled]) != length($.missing)]", "{\"enabled\":true,\"items\":[{\"nested\":[null],\"value\":42}]}", 202, 0, false)]
+    [InlineData("$.items[?value(@.nested[?@ == null && $.enabled]) == length($.missing)]", "{\"enabled\":true,\"items\":[{\"nested\":[false],\"value\":42}]}", 202, 0, false)]
+    [InlineData("$.items[?count(@.nested[?match(@, 'x')]) == length($.label)]", "{}", 400, 0, true)]
     public async Task RootDrivenNestedFilterPreservesScopeAndBoundsWorkBeforeForwarding(
         string selector, string payload, int status, int calls, bool large)
     {

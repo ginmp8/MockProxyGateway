@@ -860,6 +860,12 @@ public sealed class GatewayTests
     [InlineData("$.items[?value(@.nested[?match(@.name, 'x')].flag) == value($.expected[*])].value", "{\"expected\":[null],\"items\":[{\"nested\":[{\"name\":\"x\"}],\"value\":42}]}", 404)]
     [InlineData("$.items[?value($.expected[*]) == value(@.nested[?match(@.name, 'x')].flag)].value", "{\"expected\":[1,2],\"items\":[{\"nested\":[{\"name\":\"x\"}],\"value\":42}]}", 201)]
     [InlineData("$.items[?count($.expected[*]) == count($.nested[?@ == true])].value", "{\"expected\":[1],\"nested\":[true,false],\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?count(@.nested[?match(@, 'x')]) == length($.label)].value", "{\"label\":\"😀\",\"items\":[{\"nested\":[\"x\"],\"value\":42}]}", 201)]
+    [InlineData("$.items[?count(@.nested[?match(@, 'x')]) == length($.label)].value", "{\"label\":\"ab\",\"items\":[{\"nested\":[\"x\"],\"value\":42}]}", 404)]
+    [InlineData("$.items[?length(value($.labels[*])) == count(@.nested[?match(@, 'x')])].value", "{\"labels\":[\"😀\"],\"items\":[{\"nested\":[\"x\"],\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(value($.labels[*])) == count(@.nested[?match(@, 'x')])].value", "{\"labels\":[\"a\",\"b\"],\"items\":[{\"nested\":[\"x\"],\"value\":42}]}", 404)]
+    [InlineData("$.items[?value(@.nested[?@ == null && $.enabled]) != length($.missing)].value", "{\"enabled\":true,\"items\":[{\"nested\":[null],\"value\":42}]}", 201)]
+    [InlineData("$.items[?value(@.nested[?@ == null && $.enabled]) == length($.missing)].value", "{\"enabled\":true,\"items\":[{\"nested\":[false],\"value\":42}]}", 201)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """
