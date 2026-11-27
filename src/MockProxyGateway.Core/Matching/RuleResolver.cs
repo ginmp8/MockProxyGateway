@@ -364,9 +364,9 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
     private bool Compare(Condition condition, JsonElement actual)
     {
         var operand = condition.Value;
-        // Bound membership fan-out and text/structural comparison work, not only leaf count.
+        // Bound membership fan-out and text, numeric-token and structural comparison work, not only leaf count.
         var length = actual.ValueKind == JsonValueKind.String ? actual.GetString()!.Length :
-            actual.ValueKind is JsonValueKind.Array or JsonValueKind.Object ? actual.GetRawText().Length : 1;
+            actual.ValueKind is JsonValueKind.Number or JsonValueKind.Array or JsonValueKind.Object ? actual.GetRawText().Length : 1;
         var cost = 1L + (length / 64L);
         if (condition.Operator is "in" or "notIn")
             cost *= operand.GetArrayLength();
