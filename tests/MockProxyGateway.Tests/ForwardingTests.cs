@@ -1124,6 +1124,52 @@ public sealed class ForwardingTests
         Assert.Empty(upstream.Requests);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LiteralAsteriskMethodUsesWildcardPathSpecificityRegardlessOfOrder(bool reverseOrder)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"endpoints":[
+              {"method":"*","path":"/items/fixed","default":{"mode":"mock","response":{"statusCode":200,"text":"literal"}}},
+              {"method":"*","path":"/items/{id}","default":{"mode":"mock","response":{"statusCode":202,"text":"template"}}},
+              {"method":"*","path":"/items/{**rest}","default":{"mode":"proxy","destination":"real"}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        if (reverseOrder)
+        {
+            var endpoints = rules["services"]!["a"]!["endpoints"]!.AsArray();
+            var first = endpoints[0]!.DeepClone();
+            endpoints.RemoveAt(0);
+            endpoints.Add(first);
+        }
+        await using var gateway = await StartGatewayAsync(rules, upstream);
+        using var client = gateway.GetTestClient();
+
+        foreach (var method in new[] { "*", "GET" })
+        {
+            using var literal = CreateRequest(method, "/mock-proxy/a/items/fixed", null);
+            using var literalResponse = await client.SendAsync(literal, ct);
+            Assert.Equal(HttpStatusCode.OK, literalResponse.StatusCode);
+            Assert.Equal("literal", await literalResponse.Content.ReadAsStringAsync(ct));
+
+            using var template = CreateRequest(method, "/mock-proxy/a/items/other", null);
+            using var templateResponse = await client.SendAsync(template, ct);
+            Assert.Equal(HttpStatusCode.Accepted, templateResponse.StatusCode);
+            Assert.Equal("template", await templateResponse.Content.ReadAsStringAsync(ct));
+            Assert.Empty(upstream.Requests);
+        }
+
+        using var real = await client.GetAsync("/mock-proxy/a/items/other/child", ct);
+        Assert.Equal(HttpStatusCode.Created, real.StatusCode);
+        Assert.Single(upstream.Requests);
+        Assert.Equal("/items/other/child", upstream.Requests.Single().Target);
+    }
+
     [Fact]
     public async Task EndpointCandidateWorkIsBoundedBeforeAnyOutboundCall()
     {

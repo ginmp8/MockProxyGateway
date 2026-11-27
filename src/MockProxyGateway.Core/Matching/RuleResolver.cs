@@ -37,7 +37,11 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
         Action<long> charge = Charge;
         foreach (var endpoint in service.Endpoints)
         {
-            var exact = string.Equals(endpoint.Method, context.Request.Method, StringComparison.OrdinalIgnoreCase);
+            // The configured wildcard is never an exact method, even when the incoming
+            // extension method is the literal HTTP token "*". Otherwise matching groups
+            // are compared against an inconsistent rank and file order can win.
+            var exact = endpoint.Method != "*" &&
+                string.Equals(endpoint.Method, context.Request.Method, StringComparison.OrdinalIgnoreCase);
             if (!exact && endpoint.Method != "*")
                 continue;
             if (parts is null)
