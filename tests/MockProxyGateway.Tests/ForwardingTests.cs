@@ -1616,6 +1616,13 @@ public sealed class ForwardingTests
     [InlineData("$.items[?count(@.nested[?match(@.name, '..')]) < length(value(@.nested[*].name))]", false, 202, 0)]
     [InlineData("$.items[?@.nested[?match(value(@.*), '..')]]", true, 400, 0)]
     [InlineData("$.items[?length(value(@.nested[*].name)) == count(@.nested[?match(@.name, '..')])]", true, 400, 0)]
+    [InlineData("$.items[?@.nested[?match($.label, '..')]]", false, 202, 0)]
+    [InlineData("$.items[?@.nested[?search($.label, 'z')]]", false, 201, 1)]
+    [InlineData("$.items[?@.nested[?length(@.name) == length($.label)]]", false, 202, 0)]
+    [InlineData("$.items[?count(@.nested[?match($.label, '..')]) == 1]", false, 202, 0)]
+    [InlineData("$.items[?value(@.nested[?search($.label, 'z')].name) == 'é']", false, 201, 1)]
+    [InlineData("$.items[?@.nested[?match($.label, '..')]]", true, 400, 0)]
+    [InlineData("$.items[?@.nested[?length(@.name) == length($.label)]]", true, 400, 0)]
     public async Task NestedPrivateFilterUsesCandidateScopeAndFailsClosed(string selector, bool large, int status, int calls)
     {
         Assert.True(Json.Path.FunctionRepository.TryGet("length", out var length));
@@ -1633,7 +1640,7 @@ public sealed class ForwardingTests
         rules["services"]!["a"]!["rules"]![0]!["conditions"]!["key"] = selector;
         await using var gateway = await StartGatewayAsync(rules, upstream);
         using var client = gateway.GetTestClient();
-        var payload = "{\"items\":[{\"name\":\"outer\",\"nested\":[" +
+        var payload = "{\"label\":\"e\u0301\",\"items\":[{\"name\":\"outer\",\"nested\":[" +
             string.Join(',', Enumerable.Repeat("{\"name\":\"e\\u0301\"}", large ? 80 : 1)) + "]}]}";
         using var body = new StringContent(payload, Encoding.UTF8, "application/json");
         using var response = await client.PostAsync("/mock-proxy/a/check", body, TestContext.Current.CancellationToken);

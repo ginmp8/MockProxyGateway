@@ -225,7 +225,12 @@ internal static class BoundedJsonPathFilter
                     _maxUnionProduct, _hasNestedFilter, _hasRepeatedPredicateDescent, _usesPrivateValueQuery);
                 var nestedPredicate = nested.ReadOr(0);
                 cursor = nested.Position;
-                _usesRepeatedTraversal = nested.UsesRepeatedTraversal;
+                // Root references inside this relative, non-overlapping nested
+                // query are covered by the existing whole-input quadratic charge.
+                // Do not waive the outer repeated-traversal flag: a root-driven
+                // enclosing query could revisit every nested candidate.
+                if (ContainsUnquotedDescent(path, nestedStart, cursor))
+                    throw Invalid();
                 _usesPrivateValueQuery = nested.UsesPrivateValueQuery;
                 _maxUnionProduct = nested.MaxUnionProduct;
                 _hasNestedFilter = nested.HasNestedFilter;
@@ -284,9 +289,9 @@ internal static class BoundedJsonPathFilter
                 expression.Insert(offset - leafStart, character);
             if (nestedPrivate is not null)
             {
-                // The compiler rejects root references, recursion and predicate
-                // unions whenever any nested filter is present. Evaluate the
-                // isolated relative query on the current candidate.
+                // The enclosing query remains relative and non-overlapping.
+                // Inner predicates receive the original document root, not the
+                // outer candidate used as the start of the relative traversal.
                 var queryText = comparison is null ? expression.ToString().Trim()
                     : leftContainsPrivate ? path[leafStart..leftEnd].Trim() : path[rightStart.._index].Trim();
                 string? function = null;
@@ -351,9 +356,9 @@ internal static class BoundedJsonPathFilter
                     throw Invalid();
                 if (function is not null)
                 {
-                    return (_, candidate) =>
+                    return (root, candidate) =>
                     {
-                        var actual = EvaluateComparisonQuery(query, function, candidate);
+                        var actual = EvaluateNestedComparison(query, function, root, candidate);
                         var operand = expectedLength is { } length
                             ? LengthValue(length.Query, length.Literal, candidate)
                             : expectedQuery is null ? expected :
@@ -361,7 +366,7 @@ internal static class BoundedJsonPathFilter
                         return leftContainsPrivate ? CompareValue(actual, operand, comparison!) : CompareValue(operand, actual, comparison!);
                     };
                 }
-                return (_, candidate) => query.Evaluate(candidate).Matches.Count != 0;
+                return (root, candidate) => EvaluateNestedQuery(query, root, candidate).Count() != 0;
             }
 
             if (!JsonPath.TryParse("$[?" + expression.ToString().Trim() + "]", out var parsed) ||
@@ -369,6 +374,43 @@ internal static class BoundedJsonPathFilter
                 throw Invalid();
             return filter.Expression.Evaluate;
         }
+    }
+
+    // JsonPath.Evaluate(candidate) would replace the document root with the
+    // candidate. Traverse the already compiled, non-recursive selectors with
+    // their public root argument instead; relative node locations are private.
+    private static IEnumerable<Node> EvaluateNestedQuery(JsonPath query, JsonNode? root, JsonNode? candidate)
+    {
+        IEnumerable<Node> matches = JsonPath.Root.Evaluate(candidate).Matches;
+        foreach (var segment in query.Segments)
+        {
+            if (segment.IsRecursive || segment.Selectors.Length != 1)
+                throw Invalid();
+            var selector = segment.Selectors[0];
+            matches = matches.SelectMany(node => selector.Evaluate(node, root));
+        }
+        return matches;
+    }
+
+    private static JsonElement EvaluateNestedComparison(JsonPath query, string function, JsonNode? root, JsonNode? candidate)
+    {
+        var matches = EvaluateNestedQuery(query, root, candidate).ToArray();
+        return function == "count" ? JsonSerializer.SerializeToElement(matches.Length) :
+            matches.Length == 1 ? JsonSerializer.SerializeToElement(matches[0].Value) : default;
+    }
+
+    private static bool ContainsUnquotedDescent(string path, int start, int end)
+    {
+        for (var index = start; index < end;)
+        {
+            if (path[index] is '\'' or '"')
+                ReadQuoted(path, ref index);
+            else if (path.AsSpan(index, end - index).StartsWith("..", StringComparison.Ordinal))
+                return true;
+            else
+                index++;
+        }
+        return false;
     }
 
     private static JsonElement ReadComparisonLiteral(string text)
@@ -810,8 +852,8 @@ internal static class BoundedJsonPathFilter
                 if (Take(path, ref index, "?"))
                 {
                     // Admit one nested filter with a relative, non-overlapping
-                    // query. The compiler excludes root references, unions and
-                    // descent from any expression containing this nested filter.
+                    // query. The compiler excludes root-driven enclosing queries,
+                    // unions and descent; private nested predicates may refer to root.
                     if (filterDepth != 0 || hasNestedFilter)
                         throw Invalid();
                     hasNestedFilter = true;

@@ -235,11 +235,11 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 hasCubicTraversal = recursiveCount == 2 || hasRepeatedPredicateDescent;
                 // Descent may make filter candidate subtrees overlap. Charge worst-case
                 // repeated traversal even for a relative predicate in that case.
-                // Nested predicates remain relative and non-recursive, with no
-                // predicate unions. Outer unions can duplicate candidates by at
-                // most pathMultiplier; the existing quadratic precharge includes
-                // that factor and the full expression length, even across two
-                // outer filters. Never rely on nested root scoping.
+                // Nested enclosing queries remain relative and non-recursive,
+                // with no predicate unions. Private inner predicates may refer
+                // to the root: each nested candidate is visited at most once per
+                // outer union arm, and the quadratic precharge covers its root
+                // traversal and full expression length, even across two filters.
                 if (hasNestedFilter && (predicateRepeatedTraversal || recursive || predicateUnionProduct != 1))
                     throw Invalid("Nested JSONPath filters require relative non-recursive predicates without predicate unions.");
                 // Retain the same quadratic charge for private value conversions.
