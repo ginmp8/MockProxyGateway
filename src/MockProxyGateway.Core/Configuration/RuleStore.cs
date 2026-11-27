@@ -31,8 +31,7 @@ internal sealed partial class RuleStore : IAsyncDisposable
         _environment = environment;
         _configuration = configuration;
         _logger = logger;
-        _hasExplicitSerialized = _options.HasExplicitRulesJson ||
-            !string.Equals(_options.RulesJson, configuration["MockProxyGateway:RulesJson"], StringComparison.Ordinal);
+        _hasExplicitSerialized = _options.HasExplicitRulesJson;
         if (_hasExplicitSerialized)
             _explicitSerialized = _options.RulesJson;
         if (_options.AllowLoopbackForTests && !environment.IsDevelopment() &&

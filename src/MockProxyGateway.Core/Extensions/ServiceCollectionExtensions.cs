@@ -15,16 +15,15 @@ public static class MockProxyGatewayServiceCollectionExtensions
     public static IServiceCollection AddMockProxyGateway(this IServiceCollection services, Action<GatewayOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(services);
-        services.AddOptions<GatewayOptions>().BindConfiguration("MockProxyGateway");
+        // OptionsFactory executes these configure actions in registration order,
+        // then host post-configure actions. Only the built-in host section bind
+        // is implicit; ordinary C# assignments are explicit even if null or equal.
+        services.AddOptions<GatewayOptions>()
+            .Configure(options => options.BindingRulesJson = true)
+            .BindConfiguration("MockProxyGateway")
+            .Configure(options => options.BindingRulesJson = false);
         if (configure is not null)
-        {
-            services.Configure<GatewayOptions>(options =>
-            {
-                var assignments = options.RulesJsonAssignments;
-                configure(options);
-                options.HasExplicitRulesJson |= options.RulesJsonAssignments != assignments;
-            });
-        }
+            services.Configure<GatewayOptions>(configure);
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddSingleton<GatewayStartupOptions>();
         services.TryAddSingleton<RuleStore>();

@@ -15,8 +15,8 @@ public sealed class GatewayOptions
     /// <summary>Absolute or content-root-relative rule file.</summary>
     public string ConfigurationFile { get; set; } = "mock-proxy-gateway.json";
     private string? _rulesJson;
-    internal int RulesJsonAssignments { get; private set; }
-    internal bool HasExplicitRulesJson { get; set; }
+    internal bool BindingRulesJson { get; set; }
+    internal bool HasExplicitRulesJson { get; private set; }
 
     /// <summary>Complete serialized JSON for the Configuration source.</summary>
     public string? RulesJson
@@ -24,8 +24,12 @@ public sealed class GatewayOptions
         get => _rulesJson;
         set
         {
+            // Binding the host section must neither count as an explicit assignment
+            // nor overwrite a rule source explicitly assigned before registration.
+            if (BindingRulesJson && HasExplicitRulesJson)
+                return;
             _rulesJson = value;
-            RulesJsonAssignments++;
+            HasExplicitRulesJson |= !BindingRulesJson;
         }
     }
     /// <summary>Explicit typed programmatic provider, overriding configured source selection.</summary>
