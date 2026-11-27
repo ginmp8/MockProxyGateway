@@ -1356,6 +1356,71 @@ public sealed class ForwardingTests
     }
 
     [Theory]
+    [InlineData("equals")]
+    [InlineData("in")]
+    public async Task RepeatedNumericComparisonWorkIsBoundedBeforeAnyOutboundCall(string op)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var upstream = await Upstream.StartAsync();
+        using var capture = new CaptureProvider();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},
+              "endpoints":[{"method":"POST","path":"/uninspected","default":{"mode":"proxy","destination":"real"}}],
+              "rules":[{"id":"selected","priority":10,"conditions":{"source":"body","key":"$.number","operator":"equals","value":7},
+                "action":{"mode":"mock","response":{"statusCode":200,"text":"selected"}}}]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        var serviceRules = rules["services"]!["a"]!["rules"]!.AsArray();
+        for (var i = 0; i < 1024; i++)
+        {
+            var rule = JsonNode.Parse("""
+                {"id":"missing","priority":1,"conditions":{"source":"body","key":"$.number","operator":"equals","value":1},
+                 "action":{"mode":"mock","response":{"statusCode":202}}}
+                """)!;
+            rule["id"] = "missing-" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            rule["conditions"]!["operator"] = op;
+            if (op == "in")
+                rule["conditions"]!["value"] = JsonNode.Parse("[1,2]");
+            serviceRules.Add(rule);
+        }
+
+        await using var gateway = await StartGatewayAsync(rules, upstream, capture: capture);
+        using var client = gateway.GetTestClient();
+        // Valid JSON numeric tokens can be much larger than machine numbers.
+        // Reusing a cached selection does not make repeated comparisons free.
+        var large = "{\"number\":0." + new string('1', 6000) + "}";
+
+        using (var request = CreateRequest("POST", "/mock-proxy/a/check", large))
+        using (var rejected = await client.SendAsync(request, ct))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+            Assert.Empty(await rejected.Content.ReadAsByteArrayAsync(ct));
+        }
+        Assert.Empty(upstream.Requests);
+        await WaitForGatewayLogAsync(capture, "status=400", "category=evaluation-budget", ct);
+
+        using (var request = CreateRequest("POST", "/mock-proxy/a/check", """{"number":7}"""))
+        using (var mock = await client.SendAsync(request, ct))
+        {
+            Assert.Equal(HttpStatusCode.OK, mock.StatusCode);
+            Assert.Equal("selected", await mock.Content.ReadAsStringAsync(ct));
+        }
+        Assert.Empty(upstream.Requests);
+
+        using (var request = CreateRequest("POST", "/mock-proxy/a/check", """{"number":8}"""))
+        using (var proxy = await client.SendAsync(request, ct))
+            Assert.Equal(HttpStatusCode.Created, proxy.StatusCode);
+        Assert.Single(upstream.Requests);
+
+        using (var request = CreateRequest("POST", "/mock-proxy/a/uninspected", large))
+        using (var proxy = await client.SendAsync(request, ct))
+            Assert.Equal(HttpStatusCode.Created, proxy.StatusCode);
+        Assert.Equal(2, upstream.Requests.Count);
+        Assert.Equal(Encoding.UTF8.GetBytes(large), upstream.Requests.Last().BodyBytes);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task RepeatedMediaTypeInspectionIsBoundedBeforeAnyOutboundCall(bool manyParameters)
