@@ -391,11 +391,12 @@ internal static class BoundedJsonPathFilter
                 }
                 if (replaced != 1)
                     throw Invalid();
-                if (expectedFromRoot)
+                if (expectedFromRoot || expectedLength?.Query?.Scope == PathScope.Global)
                 {
                     // Relative enclosing selection is non-overlapping; its quadratic
-                    // charge covers this bounded root query, including count/value. Root-driven enclosing
-                    // selection receives the cubic charge.
+                    // charge also covers bounded root length operands, including
+                    // explicit value conversion. Root-driven enclosing selection
+                    // receives the cubic charge. Preserve all earlier traversal flags.
                     if (ContainsUnquotedDescent(path, leafStart, _index) ||
                         query.Segments.Any(segment => segment.IsRecursive || segment.Selectors.Length != 1))
                         throw Invalid();

@@ -178,6 +178,7 @@ public sealed class ForwardingTests
         Assert.Equal(expectedTarget, actual.Target);
         Assert.Equal(inspect ? "POST" : "GET", actual.Method);
         Assert.Equal(inspect ? payload : "", actual.Body);
+        Assert.Equal(Encoding.UTF8.GetBytes(inspect ? payload : ""), actual.BodyBytes);
         Assert.Equal("from-upstream", response.Headers.GetValues("X-Upstream").Single());
         Assert.Equal("upstream", await response.Content.ReadAsStringAsync(ct));
         foreach (var header in expected)
@@ -2336,7 +2337,7 @@ public sealed class ForwardingTests
     }
 
     private sealed record Captured(string Method, string Target, string Body, string Authorization, string Cookie, string Scenario,
-        string PrivateToken, string ForwardedFor, string Host, IReadOnlyDictionary<string, string> Headers, string[] MultipleValues);
+        string PrivateToken, string ForwardedFor, string Host, IReadOnlyDictionary<string, string> Headers, string[] MultipleValues, byte[] BodyBytes);
 
     private sealed class Upstream(WebApplication app, ConcurrentQueue<Captured> requests) : IAsyncDisposable
     {
@@ -2356,7 +2357,11 @@ public sealed class ForwardingTests
                     await handler(context);
                     return;
                 }
-                using var reader = new StreamReader(context.Request.Body, Encoding.UTF8, leaveOpen: true);
+                using var bytes = new MemoryStream();
+                await context.Request.Body.CopyToAsync(bytes, context.RequestAborted);
+                var bodyBytes = bytes.ToArray();
+                bytes.Position = 0;
+                using var reader = new StreamReader(bytes, Encoding.UTF8, leaveOpen: true);
                 var body = await reader.ReadToEndAsync(context.RequestAborted);
                 requests.Enqueue(new Captured(context.Request.Method, context.Features.Get<IHttpRequestFeature>()!.RawTarget,
                     body, context.Request.Headers.Authorization.ToString(), context.Request.Headers.Cookie.ToString(),
@@ -2364,7 +2369,7 @@ public sealed class ForwardingTests
                     context.Request.Headers["X-Private-Token"].ToString(), context.Request.Headers["X-Forwarded-For"].ToString(),
                     context.Request.Host.Value ?? "",
                     context.Request.Headers.ToDictionary(x => x.Key, x => x.Value.ToString(), StringComparer.OrdinalIgnoreCase),
-                    context.Request.Headers.GetCommaSeparatedValues("X-Multiple")));
+                    context.Request.Headers.GetCommaSeparatedValues("X-Multiple"), bodyBytes));
                 if (context.Request.Path.Value!.EndsWith("/redirect", StringComparison.Ordinal))
                 {
                     context.Response.StatusCode = 302;
