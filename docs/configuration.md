@@ -48,8 +48,9 @@ Registering DI alone is inert, including in Production.
   serialized section, including flattened children. An explicit C# RulesJson assignment
   is fixed at startup, even when equal to the original bound value.
 - **Explicit IConfiguration:** call `builder.Services.AddMockProxyGateway(configSection)`
-  with a scalar section containing JSON, or a dedicated configuration containing only
-  `RulesJson`. Do not pass a flattened rule catalog or unrelated root.
+  with a scalar section containing JSON and no children, or a dedicated configuration containing only
+  `RulesJson`. A scalar section with a competing child is invalid even when that child has a null value.
+  Do not pass a flattened rule catalog or unrelated root.
 - **Programmatic:** call
   `builder.Services.AddMockProxyGateway(o => o.ProgrammaticRules = () => JsonElement.Parse(json))`.
   The caller may supply the latest complete immutable document from its own provider.
@@ -160,8 +161,8 @@ Two predicate descents incur the cubic precharge; two outer and two predicate
 descents cannot be combined. One nested relative filter inside the outer
 predicate is admitted (e.g. `$.items[?@.nested[?@.active == true]]`), including
 `count()` and `value()` over the nested results. Expressions containing a nested
-filter cannot contain root-driven enclosing queries, predicate unions or
-recursive descent. The single nested predicate may refer to the original
+filter cannot contain predicate unions or recursive descent. Bounded root-driven
+enclosing queries use the separate cubic work profile described below. The single nested predicate may refer to the original
 document root, including ordinary existence and comparison predicates;
 additional nested levels and a third descent inside any query remain rejected.
 The locked JsonPath.Net version is 2.2.0 (MIT). An outer filter

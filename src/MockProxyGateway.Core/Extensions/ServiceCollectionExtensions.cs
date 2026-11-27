@@ -47,8 +47,10 @@ public static class MockProxyGatewayServiceCollectionExtensions
             {
                 var sectionValue = (ruleConfiguration as IConfigurationSection)?.Value;
                 var documentValue = ruleConfiguration["RulesJson"];
+                // A scalar section cannot also contain a child, even when the child's value is null.
                 if ((sectionValue is not null && documentValue is not null) ||
-                    ruleConfiguration.GetChildren().Any(x => !string.Equals(x.Key, "RulesJson", StringComparison.OrdinalIgnoreCase)) ||
+                    ruleConfiguration.GetChildren().Any(x => sectionValue is not null ||
+                        !string.Equals(x.Key, "RulesJson", StringComparison.OrdinalIgnoreCase)) ||
                     ruleConfiguration.GetSection("RulesJson").GetChildren().Any())
                     throw new InvalidOperationException("Conflicting supplied rule sources.");
                 return JsonElement.Parse(RuleStore.EncodeDocument(sectionValue ?? documentValue ??
