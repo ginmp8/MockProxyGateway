@@ -1163,6 +1163,77 @@ public sealed class ForwardingTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RepeatedMediaTypeInspectionIsBoundedBeforeAnyOutboundCall(bool manyParameters)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var upstream = await Upstream.StartAsync();
+        using var capture = new CaptureProvider();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},
+              "endpoints":[{"method":"POST","path":"/uninspected","default":{"mode":"proxy","destination":"real"}}],
+              "rules":[{"id":"selected","priority":10,"conditions":{"source":"contentType","operator":"equals","value":"application/json"},
+                "action":{"mode":"mock","response":{"statusCode":200,"text":"selected"}}}]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        var serviceRules = rules["services"]!["a"]!["rules"]!.AsArray();
+        for (var i = 0; i < 1024; i++)
+        {
+            var rule = JsonNode.Parse("""
+                {"id":"missing","priority":1,"conditions":{"source":"contentType","operator":"equals","value":"application/xml"},
+                 "action":{"mode":"mock","response":{"statusCode":202}}}
+                """)!;
+            rule["id"] = "missing-" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            serviceRules.Add(rule);
+        }
+
+        await using var gateway = await StartGatewayAsync(rules, upstream, capture: capture);
+        using var client = gateway.GetTestClient();
+        var mediaType = "text/plain" + (manyParameters
+            ? string.Concat(Enumerable.Range(0, 96).Select(i =>
+                "; p" + i.ToString(System.Globalization.CultureInfo.InvariantCulture) + "=x"))
+            : "; p=" + new string('x', 6000));
+
+        using (var request = Request("/check", mediaType))
+        using (var rejected = await client.SendAsync(request, ct))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+            Assert.Empty(await rejected.Content.ReadAsByteArrayAsync(ct));
+        }
+        Assert.Empty(upstream.Requests);
+        await WaitForGatewayLogAsync(capture, "status=400", "category=evaluation-budget", ct);
+
+        using (var request = Request("/check", "application/json; charset=utf-8"))
+        using (var mock = await client.SendAsync(request, ct))
+        {
+            Assert.Equal(HttpStatusCode.OK, mock.StatusCode);
+            Assert.Equal("selected", await mock.Content.ReadAsStringAsync(ct));
+        }
+        Assert.Empty(upstream.Requests);
+
+        using (var request = Request("/check", "text/plain; charset=utf-8"))
+        using (var proxy = await client.SendAsync(request, ct))
+            Assert.Equal(HttpStatusCode.Created, proxy.StatusCode);
+        Assert.Single(upstream.Requests);
+
+        using (var request = Request("/uninspected", mediaType))
+        using (var proxy = await client.SendAsync(request, ct))
+            Assert.Equal(HttpStatusCode.Created, proxy.StatusCode);
+        Assert.Equal(2, upstream.Requests.Count);
+        Assert.Equal(mediaType, upstream.Requests.Last().Headers["Content-Type"]);
+
+        static HttpRequestMessage Request(string path, string value)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "/mock-proxy/a" + path);
+            request.Content = new ByteArrayContent([]);
+            request.Content.Headers.TryAddWithoutValidation("Content-Type", value);
+            return request;
+        }
+    }
+
+    [Theory]
     [InlineData("cookie", "synthetic-malformed-cookie", "cookie-syntax")]
     [InlineData("cookie", "other=synthetic; malformed", "cookie-syntax")]
     [InlineData("contentType", "synthetic invalid media type", "content-type-syntax")]

@@ -37,7 +37,25 @@ jobs:
               "All discovered tests must execute and pass; skipped or incomplete tests are not acceptance"
           PY
       - name: Audit direct and transitive packages
-        run: dotnet package list --vulnerable --include-transitive
+        run: |
+          dotnet package list --vulnerable --include-transitive
+          dotnet package list --vulnerable --include-transitive --no-restore --format json --output-version 1 > artifacts/package-audit.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("artifacts/package-audit.json").read_text())
+          assert report["version"] == 1, "Unexpected NuGet audit report version"
+          assert report["sources"] and not report.get("problems"), "NuGet audit incomplete"
+          projects = report["projects"]
+          expected = {"MockProxyGateway.Core.csproj", "MockProxyGateway.Host.csproj", "MockProxyGateway.Tests.csproj"}
+          assert len(projects) == len(expected) and {Path(p["path"]).name for p in projects} == expected, "Missing audited projects"
+          for project in projects:
+              for framework in project.get("frameworks", []):
+                  for group in ("topLevelPackages", "transitivePackages"):
+                      for package in framework.get(group, []):
+                          assert not package.get("vulnerabilities"), f"Vulnerable dependency: {package['id']}"
+          print("NuGet direct and transitive audit gate passed.")
+          PY
       - name: Validate example schema
         run: |
           python3 -m venv /tmp/mock-proxy-schema-venv

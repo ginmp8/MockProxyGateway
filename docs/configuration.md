@@ -201,7 +201,9 @@ first filter, rejecting values that cannot be represented exactly as decimals.
 Numeric range comparisons reject unsupported decimal precision rather than rounding. Condition depth is at most 12; rule count 4096; condition nodes
 16384; body nodes 16384; weighted evaluation budget 65536; at most 64 regex
 evaluations per request. Query and cookie inspection charges the complete
-inspected input and entry count, including unrelated names; selected text values
+inspected input and entry count, including unrelated names. Content-type
+inspection charges the complete header and parameter count even though matching
+uses only the media type. Selected text values
 are charged before serialization even for presence operators. Budget exhaustion
 returns a sanitized 400 without a proxy fallback. An action that does not inspect
 these sources does not incur those inspection charges or modify the values.
