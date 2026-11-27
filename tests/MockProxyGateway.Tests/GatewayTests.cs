@@ -227,7 +227,6 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@.tags[0,1,2,3,4]) == 5]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@.tags[0,1,2][0,1]) == 6]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$['items','items'][?count(@.tags[0,1,2]) == 3]\",\"operator\":\"exists\"}")]
-    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count($.nested[?$.value]) == 1]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?$.values[0,1]]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?$..value]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@.nested) ]\",\"operator\":\"exists\"}")]
@@ -291,7 +290,6 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?match($.name, 'x') && @..flag]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?match(@.name, @.pattern)]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?@.other[?match(@.name, 'x')]]]\",\"operator\":\"exists\"}")]
-    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count($.nested[?match(@.name, 'x')]) == 1]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@.nested[?match(@.name, 'x')]) == match(@.name, 'x')]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?value(@.nested[?match(@.name, 'x')]) == @.flags[*]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?value(@.nested[?match(@.name, 'x')]) == $.flags[*]]\",\"operator\":\"exists\"}")]
@@ -319,6 +317,10 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?length(length(length(@.name))) == 0]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?length(count($..names[*])) == 0]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(count(@.*), '[')]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count($..nested[?@ == true]) == 1]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?$.nested[?@['name','name']]]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?$.nested[?@.other[?@ == true]]]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count($.nested[?@ == true]) == length($.nested)]\",\"operator\":\"exists\"}")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """
@@ -832,6 +834,14 @@ public sealed class GatewayTests
     [InlineData("$.items[?value(@.nested[?match(@.name, 'x')].flag) == $.flag].value", "{\"flag\":null,\"items\":[{\"nested\":[{\"name\":\"x\"}],\"value\":42}]}", 404)]
     [InlineData("$.items[?$.flag == value(@.nested[?match(@.name, 'x')].flag)].value", "{\"items\":[{\"flag\":null,\"nested\":[{\"name\":\"x\"}],\"value\":42}]}", 201)]
     [InlineData("$.items[?$.flag == value(@.nested[?match(@.name, 'x')].flag)].value", "{\"flag\":{\"b\":[true,null],\"a\":1},\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":{\"a\":1,\"b\":[true,null]}}],\"value\":42}]}", 201)]
+    [InlineData("$.items[?$.nested[?@ == true]].value", "{\"items\":[{\"value\":42}],\"nested\":[true]}", 201)]
+    [InlineData("$.items[?$.nested[?@ == true]].value", "{\"items\":[{\"value\":42,\"nested\":[true]}],\"nested\":[false]}", 404)]
+    [InlineData("$.items[?count($.nested[?$.value]) == 1].value", "{\"items\":[{\"value\":42}],\"nested\":[0],\"value\":null}", 201)]
+    [InlineData("$.items[?count($.nested[?$.value]) == 1].value", "{\"items\":[{\"value\":42}],\"nested\":[0]}", 404)]
+    [InlineData("$.items[?1 == count($.nested[?match(@.name, 'x')])].value", "{\"items\":[{\"value\":42}],\"nested\":[{\"name\":\"x\"}]}", 201)]
+    [InlineData("$.items[?count($.nested[?match(@.name, 'x')]) == 1].value", "{\"items\":[{\"value\":42}],\"nested\":[{\"name\":\"y\"}]}", 404)]
+    [InlineData("$.items[?value($.nested[?@ == null]) == null].value", "{\"items\":[{\"value\":42}],\"nested\":[null]}", 201)]
+    [InlineData("$.items[?value($.nested[?@ == null]) == null].value", "{\"items\":[{\"value\":42}],\"nested\":[false]}", 404)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """

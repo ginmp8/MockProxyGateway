@@ -156,10 +156,12 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                         _filterNumbersValidated = true;
                     }
                 }
-                var regexCandidates = _bodyNodes * condition.JsonPathRegexCandidateMultiplier;
+                // Reserve repeated inner regex visits for root-driven nested filters.
+                var regexCandidates = (long)_bodyNodes * condition.JsonPathRegexCandidateMultiplier *
+                    (condition.HasJsonPathRootDrivenNestedFilter ? _bodyNodes : 1);
                 if (regexCandidates > _regexRemaining)
                     throw new RequestFailure(400, "regex-budget");
-                _regexRemaining -= regexCandidates;
+                _regexRemaining -= (int)regexCandidates;
                 var matches = condition.JsonPath!.Evaluate(_body).Matches;
                 var results = new List<JsonElement>();
                 foreach (var match in matches)
