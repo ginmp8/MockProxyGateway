@@ -320,7 +320,7 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count($..nested[?@ == true]) == 1]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?$.nested[?@['name','name']]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?$.nested[?@.other[?@ == true]]]\",\"operator\":\"exists\"}")]
-    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count($.nested[?@ == true]) == length($.nested)]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count($.nested[?@ == true]) == length(value($.nested[0,1]))]\",\"operator\":\"exists\"}")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """
@@ -842,6 +842,13 @@ public sealed class GatewayTests
     [InlineData("$.items[?count($.nested[?match(@.name, 'x')]) == 1].value", "{\"items\":[{\"value\":42}],\"nested\":[{\"name\":\"y\"}]}", 404)]
     [InlineData("$.items[?value($.nested[?@ == null]) == null].value", "{\"items\":[{\"value\":42}],\"nested\":[null]}", 201)]
     [InlineData("$.items[?value($.nested[?@ == null]) == null].value", "{\"items\":[{\"value\":42}],\"nested\":[false]}", 404)]
+    [InlineData("$.items[?count($.nested[?@ == true]) == length($.nested)].value", "{\"items\":[{\"value\":42,\"nested\":[]}],\"nested\":[true]}", 201)]
+    [InlineData("$.items[?count($.nested[?@ == true]) == length($.nested)].value", "{\"items\":[{\"value\":42,\"nested\":[true]}],\"nested\":[true,false]}", 404)]
+    [InlineData("$.items[?length(@.name) == count($.nested[?@ == true])].value", "{\"items\":[{\"value\":42,\"name\":\"😀\"}],\"nested\":[true]}", 201)]
+    [InlineData("$.items[?length(value($.labels[*])) == count($.nested[?@ == true])].value", "{\"items\":[{\"value\":42}],\"labels\":[\"😀\"],\"nested\":[true]}", 201)]
+    [InlineData("$.items[?length(value($.labels[*])) == count($.nested[?@ == true])].value", "{\"items\":[{\"value\":42}],\"labels\":[\"x\",\"y\"],\"nested\":[true]}", 404)]
+    [InlineData("$.items[?value($.nested[?@ == null]) != length($.missing)].value", "{\"items\":[{\"value\":42}],\"nested\":[null]}", 201)]
+    [InlineData("$.items[?value($.nested[?@ == null]) == length($.missing)].value", "{\"items\":[{\"value\":42}],\"nested\":[false]}", 201)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """

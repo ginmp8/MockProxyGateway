@@ -1780,6 +1780,11 @@ public sealed class ForwardingTests
     [InlineData("$.items[?count($.nested[?match(@, 'x')]) == 1]", "{\"items\":[0],\"nested\":[\"z\"]}", 201, 1, false)]
     [InlineData("$.items[?$.nested[?@ == true]]", "{}", 400, 0, true)]
     [InlineData("$.items[?count($.nested[?match(@, 'x')]) == 1]", "{}", 400, 0, true)]
+    [InlineData("$.items[?count($.nested[?@ == true]) == length($.nested)]", "{\"items\":[{\"nested\":[]}],\"nested\":[true]}", 202, 0, false)]
+    [InlineData("$.items[?count($.nested[?@ == true]) == length($.nested)]", "{\"items\":[{\"nested\":[true]}],\"nested\":[true,false]}", 201, 1, false)]
+    [InlineData("$.items[?length(@.name) == count($.nested[?match(@, 'x')])]", "{\"items\":[{\"name\":\"😀\"}],\"nested\":[\"x\"]}", 202, 0, false)]
+    [InlineData("$.items[?length(value($.labels[*])) == count($.nested[?@ == true])]", "{\"items\":[0],\"labels\":[\"a\",\"b\"],\"nested\":[true]}", 201, 1, false)]
+    [InlineData("$.items[?count($.nested[?@ == true]) == length($.nested)]", "{}", 400, 0, true)]
     public async Task RootDrivenNestedFilterPreservesScopeAndBoundsWorkBeforeForwarding(
         string selector, string payload, int status, int calls, bool large)
     {

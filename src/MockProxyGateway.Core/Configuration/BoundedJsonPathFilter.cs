@@ -368,8 +368,9 @@ internal static class BoundedJsonPathFilter
                 {
                     // Root traversal can run once per outer candidate.
                     // Keep union/descent exclusions and charge cubic work and
-                    // quadratic regex visits. Length operands remain excluded.
-                    if (expectedLength is not null || ContainsUnquotedDescent(path, leafStart, _index) ||
+                    // quadratic regex visits. The independently bounded length operand
+                    // is covered by the same conservative traversal charge.
+                    if (ContainsUnquotedDescent(path, leafStart, _index) ||
                         query.Segments.Any(segment => segment.IsRecursive || segment.Selectors.Length != 1))
                         throw Invalid();
                     HasRootDrivenNestedFilter = true;
@@ -404,7 +405,7 @@ internal static class BoundedJsonPathFilter
                     {
                         var actual = EvaluateNestedComparison(query, function, root, queryFromRoot ? root : candidate);
                         var operand = expectedLength is { } length
-                            ? LengthValue(length.Query, length.Literal, candidate)
+                            ? LengthValue(length.Query, length.Literal, root, candidate)
                             : expectedQuery is null ? expected :
                                 EvaluateComparisonQuery(expectedQuery, expectedFunction, expectedFromRoot ? root : candidate);
                         return leftContainsPrivate ? CompareValue(actual, operand, comparison!) : CompareValue(operand, actual, comparison!);
@@ -483,8 +484,8 @@ internal static class BoundedJsonPathFilter
         return document.RootElement.Clone();
     }
 
-    private static JsonElement LengthValue(JsonPath? query, int? literal, JsonNode? candidate) =>
-        BoundedLengthFilterSelector.GetLength(query, literal, candidate, candidate) is { } length
+    private static JsonElement LengthValue(JsonPath? query, int? literal, JsonNode? root, JsonNode? candidate) =>
+        BoundedLengthFilterSelector.GetLength(query, literal, root, candidate) is { } length
             ? JsonSerializer.SerializeToElement(length) : default;
 
     private static JsonElement EvaluateComparisonQuery(JsonPath query, string? function, JsonNode? candidate) =>
