@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Json.Path;
@@ -5,7 +6,7 @@ using Json.Path;
 namespace MockProxyGateway.Configuration;
 
 internal sealed record RuleSnapshot(long Version, IReadOnlyDictionary<string, Destination> Destinations, IReadOnlyDictionary<string, ServiceRules> Services);
-internal sealed record Destination(Uri BaseUri, string[] RemoveQuery);
+internal sealed record Destination(Uri BaseUri, FrozenSet<string> RemoveQuery);
 internal sealed record ServiceRules(bool Enabled, RuleAction? Default, Rule[] Rules, EndpointRules[] Endpoints);
 internal sealed record EndpointRules(string Method, RoutePattern Path, RuleAction? Default, Rule[] Rules);
 internal sealed record Rule(string Id, bool Enabled, int Priority, DateTimeOffset? ExpiresAt, Condition Condition, RuleAction Action);

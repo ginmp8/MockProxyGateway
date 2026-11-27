@@ -101,11 +101,11 @@ internal sealed class ProxyTransport : IDisposable
     private static Uri BuildTarget(HttpContext context, Destination destination, string path)
     {
         var query = context.Request.QueryString.Value ?? "";
-        if (destination.RemoveQuery.Length > 0 && query.Length > 1)
+        if (destination.RemoveQuery.Count > 0 && query.Length > 1)
         {
             var fields = query[1..].Split('&');
             var retained = fields.Where(field => !QueryHelpers.ParseQuery("?" + field).Keys
-                .Any(key => destination.RemoveQuery.Contains(key, StringComparer.OrdinalIgnoreCase)));
+                .Any(destination.RemoveQuery.Contains));
             var filtered = string.Join('&', retained);
             query = filtered.Length == 0 ? "" : "?" + filtered;
         }

@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -34,7 +35,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             if (!Uri.TryCreate(Text(entry.Value, "baseUrl"), UriKind.Absolute, out var uri) ||
                 !ProxyDestinationPolicy.IsValid(uri, options))
                 throw Invalid("Invalid or unapproved destination.");
-            destinations.Add(entry.Name, new Destination(uri, Strings(entry.Value, "removeQuery")));
+            destinations.Add(entry.Name, new Destination(uri, Strings(entry.Value, "removeQuery").ToFrozenSet(StringComparer.OrdinalIgnoreCase)));
         }
         var services = new Dictionary<string, ServiceRules>(StringComparer.Ordinal);
         foreach (var entry in root.GetProperty("services").EnumerateObject())

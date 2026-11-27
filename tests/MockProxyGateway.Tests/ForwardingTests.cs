@@ -289,6 +289,40 @@ public sealed class ForwardingTests
         Assert.Equal(count, upstream.Requests.Count);
     }
 
+    [Fact]
+    public async Task QueryRemovalUsesDecodedNamesAndPreservesEveryRetainedWireField()
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        // Include a large catalog, mixed-case duplicates and decoded names.
+        var removals = new JsonArray();
+        for (var i = 0; i < 8192; i++)
+            removals.Add("unused-" + i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        removals.Add("simulate");
+        removals.Add("SIMULATE");
+        removals.Add("test flag");
+        rules["destinations"]!["real"]!["removeQuery"] = removals;
+        await using var gateway = await StartGatewayAsync(rules, upstream, realServer: true);
+        using var client = new HttpClient(new SocketsHttpHandler { UseProxy = false, AllowAutoRedirect = false });
+        var ct = TestContext.Current.CancellationToken;
+        var uri = new Uri(gateway.Urls.Single().TrimEnd('/') +
+            "/mock-proxy/a/resource?%73IMULATE=one&keep=a%2fb&test+flag=yes&simulate=two&keep=%41+%20&SIMULATE&test%20flag=no&simulator=keep&other",
+            new UriCreationOptions { DangerousDisablePathAndQueryCanonicalization = true });
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer synthetic-query-removal-test");
+        request.Headers.TryAddWithoutValidation("X-Test-Scenario", "pass-through");
+        using var response = await client.SendAsync(request, ct);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var actual = Assert.Single(upstream.Requests);
+        Assert.Equal("/resource?keep=a%2fb&keep=%41+%20&simulator=keep&other", actual.Target);
+        Assert.Equal("Bearer synthetic-query-removal-test", actual.Authorization);
+        Assert.Equal("pass-through", actual.Scenario);
+    }
+
     [Theory]
     [InlineData("/mock-proxy/a/../../api/health", 400)]
     [InlineData("/%6dock-proxy/a/../../api/health", 400)]

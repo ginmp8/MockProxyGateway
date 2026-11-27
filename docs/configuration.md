@@ -260,7 +260,11 @@ YARP handles HTTP protocol-specific headers, and the outbound Host uses the
 registered destination authority. Each registered destination must be trusted
 with the complete end-to-end header set. Upstreams must not treat untrusted
 forwarded metadata as authenticated identity. Explicit removeQuery can still
-remove configured query controls. No header policy settings are required or supported.
+remove configured query controls. Removal names are compiled into an immutable,
+ordinal case-insensitive lookup at snapshot creation, so each query field does
+not scan the configured catalog. Only decoded matching names are removed; the
+original encoding, order and repeated values of retained fields are preserved.
+No header policy settings are required or supported.
 Early gateway rejections (missing service segment, invalid target, unsupported
 protocol, and concurrency limit) emit the same redacted completion event with
 the current configuration version and correlation ID. Service, rule and action
