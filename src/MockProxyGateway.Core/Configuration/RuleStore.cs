@@ -59,7 +59,7 @@ internal sealed partial class RuleStore : IAsyncDisposable
         byte[] bytes;
         if (_options.ProgrammaticRules is not null)
         {
-            if (_explicitSerialized is not null)
+            if (_hasExplicitSerialized)
                 throw new InvalidOperationException("Conflicting explicit rule sources.");
             bytes = ReadProgrammatic();
         }
@@ -79,7 +79,7 @@ internal sealed partial class RuleStore : IAsyncDisposable
         else if (string.Equals(_options.RuleSource, "File", StringComparison.OrdinalIgnoreCase))
         {
             if (HasConfiguredRuleSource("Rules") ||
-                HasConfiguredRuleSource("RulesJson") || _explicitSerialized is not null)
+                HasConfiguredRuleSource("RulesJson") || _hasExplicitSerialized)
                 throw new InvalidOperationException("Conflicting file and inline/serialized rule sources.");
             var path = Path.GetFullPath(_options.ConfigurationFile, _environment.ContentRootPath);
             using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
@@ -130,7 +130,7 @@ internal sealed partial class RuleStore : IAsyncDisposable
     private byte[] ReadInline()
     {
         const string section = "MockProxyGateway:Rules";
-        if (HasConfiguredRuleSource("RulesJson") || _explicitSerialized is not null ||
+        if (HasConfiguredRuleSource("RulesJson") || _hasExplicitSerialized ||
             _configuration is not IConfigurationRoot root)
             throw new InvalidOperationException("Conflicting or unsupported inline rule source.");
         var providers = root.Providers.Where(provider =>

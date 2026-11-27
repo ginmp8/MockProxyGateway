@@ -49,6 +49,9 @@ Registering DI alone is inert, including in Production.
   omit unused rule-source keys entirely: an explicitly null competing `Rules` or
   `RulesJson` key is still a conflicting definition. An explicit C# RulesJson assignment
   is fixed at startup, even when equal to the original bound value.
+  Explicit assignment to `null` is still a serialized source definition, not an
+  omission; it is rejected with File, Inline, or another explicitly supplied
+  provider. Omit the assignment entirely when choosing those sources.
 - **Explicit IConfiguration:** call `builder.Services.AddMockProxyGateway(configSection)`
   with a scalar section containing JSON and no children, or a dedicated configuration containing only
   `RulesJson`. A scalar section with a competing child is invalid even when that child has a null value.
