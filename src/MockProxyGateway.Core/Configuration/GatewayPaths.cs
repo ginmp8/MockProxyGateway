@@ -121,14 +121,18 @@ internal sealed class RoutePattern
         Shape = "/" + string.Join('/', shape);
     }
 
-    internal Dictionary<string, string>? Match(string path)
+    internal Dictionary<string, string>? Match(string[] parts, Action<long> charge)
     {
-        var parts = Split(path);
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
         for (var i = 0; i < _segments.Length; i++)
         {
+            // Endpoint selection is part of matching, including unsuccessful
+            // candidates. Charge each inspected segment before comparing it.
+            charge(1);
             if (_ranks[i] == 0)
             {
+                for (var j = i; j < parts.Length; j++)
+                    charge(1L + parts[j].Length / 64L);
                 result.Add(_segments[i][3..^1], string.Join('/', parts.Skip(i)));
                 return result;
             }
@@ -136,8 +140,12 @@ internal sealed class RoutePattern
                 return null;
             if (_ranks[i] == 1)
                 result.Add(_segments[i][1..^1], parts[i]);
-            else if (!string.Equals(_segments[i], parts[i], StringComparison.Ordinal))
-                return null;
+            else
+            {
+                charge(Math.Min(_segments[i].Length, parts[i].Length) / 64L);
+                if (!string.Equals(_segments[i], parts[i], StringComparison.Ordinal))
+                    return null;
+            }
         }
         return parts.Length == _segments.Length ? result : null;
     }
@@ -156,5 +164,5 @@ internal sealed class RoutePattern
         return _ranks.Length.CompareTo(other._ranks.Length);
     }
 
-    private static string[] Split(string path) => path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+    internal static string[] Split(string path) => path.Split('/', StringSplitOptions.RemoveEmptyEntries);
 }

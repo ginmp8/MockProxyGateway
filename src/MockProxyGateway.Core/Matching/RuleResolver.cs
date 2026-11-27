@@ -33,12 +33,21 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
         EndpointRules? selected = null;
         Dictionary<string, string> route = new(StringComparer.Ordinal);
         var ambiguous = false;
+        string[]? parts = null;
+        Action<long> charge = Charge;
         foreach (var endpoint in service.Endpoints)
         {
             var exact = string.Equals(endpoint.Method, context.Request.Method, StringComparison.OrdinalIgnoreCase);
             if (!exact && endpoint.Method != "*")
                 continue;
-            var matched = endpoint.Path.Match(path);
+            if (parts is null)
+            {
+                // Split the request path once, and reserve its materialization cost.
+                Charge(1L + path.Length / 64L);
+                parts = RoutePattern.Split(path);
+                Charge(parts.Length);
+            }
+            var matched = endpoint.Path.Match(parts, charge);
             if (matched is null)
                 continue;
             var comparison = selected is null ? 1 : exact.CompareTo(selected.Method != "*");

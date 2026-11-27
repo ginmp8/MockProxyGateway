@@ -1029,6 +1029,59 @@ public sealed class ForwardingTests
         Assert.Empty(upstream.Requests);
     }
 
+    [Fact]
+    public async Task EndpointCandidateWorkIsBoundedBeforeAnyOutboundCall()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var upstream = await Upstream.StartAsync();
+        using var capture = new CaptureProvider();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},
+              "endpoints":[{"method":"GET","path":"/control","default":{"mode":"mock","response":{"statusCode":200,"text":"selected"}}}]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        var endpoints = rules["services"]!["a"]!["endpoints"]!.AsArray();
+        var prefix = string.Concat(Enumerable.Repeat("/common", 96));
+        for (var i = 0; i < 1023; i++)
+        {
+            var endpoint = JsonNode.Parse("""
+                {"method":"GET","path":"/candidate","default":{"mode":"mock","response":{"statusCode":202}}}
+                """)!;
+            endpoint["path"] = prefix + "/candidate-" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            endpoints.Add(endpoint);
+        }
+
+        await using var gateway = await StartGatewayAsync(rules, upstream, capture: capture);
+        using var client = gateway.GetTestClient();
+        var unmatched = prefix + "/unmatched";
+        using (var rejected = await client.GetAsync("/mock-proxy/a" + unmatched, ct))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+            Assert.Empty(await rejected.Content.ReadAsByteArrayAsync(ct));
+        }
+        Assert.Empty(upstream.Requests);
+        await WaitForGatewayLogAsync(capture, "status=400", "category=evaluation-budget", ct);
+
+        using (var mock = await client.GetAsync("/mock-proxy/a/control", ct))
+        {
+            Assert.Equal(HttpStatusCode.OK, mock.StatusCode);
+            Assert.Equal("selected", await mock.Content.ReadAsStringAsync(ct));
+        }
+        Assert.Empty(upstream.Requests);
+
+        using (var proxy = await client.GetAsync("/mock-proxy/a/ordinary", ct))
+            Assert.Equal(HttpStatusCode.Created, proxy.StatusCode);
+        Assert.Single(upstream.Requests);
+
+        // Method-ineligible endpoints do not inspect the long path at all.
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/mock-proxy/a" + unmatched);
+        using (var proxy = await client.SendAsync(request, ct))
+            Assert.Equal(HttpStatusCode.Created, proxy.StatusCode);
+        Assert.Equal(2, upstream.Requests.Count);
+        Assert.Equal(unmatched, upstream.Requests.Last().Target);
+    }
+
     [Theory]
     [InlineData("query")]
     [InlineData("cookie")]
