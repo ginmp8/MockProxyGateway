@@ -5,8 +5,8 @@ contains a single reusable Core package, an optional standalone host, five rule
 source paths, deterministic matching, mock responses, guarded YARP transport,
 atomic rule reload, schema, samples, and executable acceptance checks.
 
-[CI run 45970390426](https://github.com/ginmp8/MockProxyGateway/actions/runs/45970390426)
-for commit 813fe1b53b50d5deb3a6d2f487629e3cb50103da: 1020 tests passed, none failed or skipped;
+[CI run 45978677764](https://github.com/ginmp8/MockProxyGateway/actions/runs/45978677764)
+for commit 2a99ea9c97a9c3f2fb24741c14a29797eabbc0b5: 1025 tests passed, none failed or skipped;
 locked restore, Release build, dependency audit, schema, pinned sample curl,
 package content and runtime license inspection, local-feed consumer (including
 optional host policies), standalone Docker smoke and lockfile enforcement passed.

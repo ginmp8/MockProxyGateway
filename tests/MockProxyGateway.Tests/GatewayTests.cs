@@ -321,6 +321,9 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?$.nested[?@['name','name']]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?$.nested[?@.other[?@ == true]]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count($.nested[?@ == true]) == length(value($.nested[0,1]))]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@.nested[?match(@.name, 'x')]) == count($.expected[0,1])]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?value($..expected) == value(@.nested[?match(@.name, 'x')].flag)]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count($.expected[?@]) == count(@.nested[?match(@.name, 'x')])]\",\"operator\":\"exists\"}")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """
@@ -849,6 +852,14 @@ public sealed class GatewayTests
     [InlineData("$.items[?length(value($.labels[*])) == count($.nested[?@ == true])].value", "{\"items\":[{\"value\":42}],\"labels\":[\"x\",\"y\"],\"nested\":[true]}", 404)]
     [InlineData("$.items[?value($.nested[?@ == null]) != length($.missing)].value", "{\"items\":[{\"value\":42}],\"nested\":[null]}", 201)]
     [InlineData("$.items[?value($.nested[?@ == null]) == length($.missing)].value", "{\"items\":[{\"value\":42}],\"nested\":[false]}", 201)]
+    [InlineData("$.items[?count(@.nested[?match(@.name, 'x')]) == count($.expected[*])].value", "{\"expected\":[0],\"items\":[{\"nested\":[{\"name\":\"x\"}],\"value\":42}]}", 201)]
+    [InlineData("$.items[?count(@.nested[?match(@.name, 'x')]) == count($.expected[*])].value", "{\"expected\":[0,1],\"items\":[{\"nested\":[{\"name\":\"x\"}],\"value\":42}]}", 404)]
+    [InlineData("$.items[?count($.expected[*]) < count(@.nested[?match(@.name, 'x')])].value", "{\"expected\":[],\"items\":[{\"nested\":[{\"name\":\"x\"}],\"value\":42}]}", 201)]
+    [InlineData("$.items[?value($.expected[*]) == value(@.nested[?match(@.name, 'x')].flag)].value", "{\"expected\":[{\"a\":1}],\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":{\"a\":1}}],\"value\":42}]}", 201)]
+    [InlineData("$.items[?value(@.nested[?match(@.name, 'x')].flag) == value($.expected[*])].value", "{\"expected\":[null],\"items\":[{\"nested\":[{\"name\":\"x\",\"flag\":null}],\"value\":42}]}", 201)]
+    [InlineData("$.items[?value(@.nested[?match(@.name, 'x')].flag) == value($.expected[*])].value", "{\"expected\":[null],\"items\":[{\"nested\":[{\"name\":\"x\"}],\"value\":42}]}", 404)]
+    [InlineData("$.items[?value($.expected[*]) == value(@.nested[?match(@.name, 'x')].flag)].value", "{\"expected\":[1,2],\"items\":[{\"nested\":[{\"name\":\"x\"}],\"value\":42}]}", 201)]
+    [InlineData("$.items[?count($.expected[*]) == count($.nested[?@ == true])].value", "{\"expected\":[1],\"nested\":[true,false],\"items\":[{\"value\":42}]}", 201)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """

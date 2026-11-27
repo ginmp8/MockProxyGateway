@@ -336,7 +336,7 @@ internal static class BoundedJsonPathFilter
                         if (expectedFunction is not ("count" or "value"))
                             throw Invalid();
                         rightText = rightText[(otherOpen + 1)..^1].Trim();
-                        if (!rightText.StartsWith('@'))
+                        if (!rightText.StartsWith('@') && !rightText.StartsWith('$'))
                             throw Invalid();
                     }
                     if (rightText.StartsWith('@'))
@@ -348,9 +348,11 @@ internal static class BoundedJsonPathFilter
                     }
                     else if (expectedLength is null && rightText.StartsWith('$'))
                     {
-                        if (expectedFunction is not null ||
-                            !JsonPath.TryParse(rightText, out expectedQuery) ||
-                            !expectedQuery.IsSingular || expectedQuery.Segments.Length > 16)
+                        if (!JsonPath.TryParse(rightText, out expectedQuery) ||
+                            (expectedFunction is null && !expectedQuery.IsSingular) ||
+                            expectedQuery.Segments.Length > 16 ||
+                            expectedQuery.Segments.Any(segment => segment.IsRecursive || segment.Selectors.Length != 1 ||
+                                segment.Selectors[0] is FilterSelector))
                             throw Invalid();
                         expectedFromRoot = true;
                     }
@@ -392,7 +394,7 @@ internal static class BoundedJsonPathFilter
                 if (expectedFromRoot)
                 {
                     // Relative enclosing selection is non-overlapping; its quadratic
-                    // charge covers this root operand. Root-driven enclosing
+                    // charge covers this bounded root query, including count/value. Root-driven enclosing
                     // selection receives the cubic charge.
                     if (ContainsUnquotedDescent(path, leafStart, _index) ||
                         query.Segments.Any(segment => segment.IsRecursive || segment.Selectors.Length != 1))

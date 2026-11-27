@@ -1787,6 +1787,13 @@ public sealed class ForwardingTests
     [InlineData("$.items[?length(@.name) == count($.nested[?match(@, 'x')])]", "{\"items\":[{\"name\":\"😀\"}],\"nested\":[\"x\"]}", 202, 0, false)]
     [InlineData("$.items[?length(value($.labels[*])) == count($.nested[?@ == true])]", "{\"items\":[0],\"labels\":[\"a\",\"b\"],\"nested\":[true]}", 201, 1, false)]
     [InlineData("$.items[?count($.nested[?@ == true]) == length($.nested)]", "{}", 400, 0, true)]
+    [InlineData("$.items[?count(@.nested[?@ == true && $.enabled]) == count($.expected[*])]", "{\"enabled\":true,\"expected\":[0],\"items\":[{\"nested\":[true,false]}]}", 202, 0, false)]
+    [InlineData("$.items[?count($.expected[*]) < count(@.nested[?@ == true && $.enabled])]", "{\"enabled\":true,\"expected\":[0],\"items\":[{\"nested\":[true,false]}]}", 201, 1, false)]
+    [InlineData("$.items[?value($.expected[*]) == value(@.nested[?@.active && $.enabled].flag)]", "{\"enabled\":true,\"expected\":[null],\"items\":[{\"nested\":[{\"active\":true,\"flag\":null}]}]}", 202, 0, false)]
+    [InlineData("$.items[?value(@.nested[?@.active && $.enabled].flag) == value($.expected[*])]", "{\"enabled\":true,\"expected\":[null],\"items\":[{\"nested\":[{\"active\":true}]}]}", 201, 1, false)]
+    [InlineData("$.items[?count($.expected[*]) == count($.nested[?@ == true])]", "{\"items\":[0],\"nested\":[true,false],\"expected\":[0]}", 202, 0, false)]
+    [InlineData("$.items[?count($.expected[*]) == count($.nested[?@ == true])]", "{\"items\":[0],\"nested\":[true,false],\"expected\":[]}", 201, 1, false)]
+    [InlineData("$.items[?count($.expected[*]) == count($.nested[?@ == true])]", "{}", 400, 0, true)]
     public async Task RootDrivenNestedFilterPreservesScopeAndBoundsWorkBeforeForwarding(
         string selector, string payload, int status, int calls, bool large)
     {
