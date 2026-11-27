@@ -105,9 +105,10 @@ internal sealed class ProxyTransport : IDisposable
         {
             var fields = query[1..].Split('&');
             var retained = fields.Where(field => !QueryHelpers.ParseQuery("?" + field).Keys
-                .Any(destination.RemoveQuery.Contains));
-            var filtered = string.Join('&', retained);
-            query = filtered.Length == 0 ? "" : "?" + filtered;
+                .Any(destination.RemoveQuery.Contains)).ToArray();
+            // No retained fields and a retained empty wire field are distinct.
+            // Preserve the query delimiter when an empty field survives removal.
+            query = retained.Length == 0 ? "" : "?" + string.Join('&', retained);
         }
         if (!GatewayPaths.IsSafe(path) || !GatewayPaths.IsEscapedTargetPart(path, query: false) ||
             !GatewayPaths.IsEscapedTargetPart(query, query: true))

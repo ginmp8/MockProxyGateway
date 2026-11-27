@@ -355,6 +355,36 @@ public sealed class ForwardingTests
     }
 
     [Theory]
+    [InlineData("?simulate=one", "")]
+    [InlineData("?simulate=one&", "?")]
+    [InlineData("?&simulate=one", "?")]
+    [InlineData("?simulate=one&&", "?&")]
+    [InlineData("?keep=a%2fb&&simulate=one", "?keep=a%2fb&")]
+    [InlineData("?&keep=a%2fb&simulate=one", "?&keep=a%2fb")]
+    [InlineData("?&", "?&")]
+    public async Task QueryRemovalPreservesEmptyRetainedWireFields(string query, string expectedQuery)
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/","removeQuery":["simulate"]}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"}}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        await using var gateway = await StartGatewayAsync(rules, upstream, realServer: true);
+        using var client = new HttpClient(new SocketsHttpHandler { UseProxy = false, AllowAutoRedirect = false });
+        var ct = TestContext.Current.CancellationToken;
+        var uri = new Uri(gateway.Urls.Single().TrimEnd('/') + "/mock-proxy/a/resource" + query,
+            new UriCreationOptions { DangerousDisablePathAndQueryCanonicalization = true });
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer synthetic-empty-query-test");
+        using var response = await client.SendAsync(request, ct);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var actual = Assert.Single(upstream.Requests);
+        Assert.Equal("/resource" + expectedQuery, actual.Target);
+        Assert.Equal("Bearer synthetic-empty-query-test", actual.Authorization);
+    }
+
+    [Theory]
     [InlineData("/mock-proxy/a/../../api/health", 400)]
     [InlineData("/%6dock-proxy/a/../../api/health", 400)]
     [InlineData("/%6dock-proxy/a/%2e%2e/%2e%2e/api/health", 400)]

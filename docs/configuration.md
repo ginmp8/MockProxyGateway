@@ -263,7 +263,8 @@ forwarded metadata as authenticated identity. Explicit removeQuery can still
 remove configured query controls. Removal names are compiled into an immutable,
 ordinal case-insensitive lookup at snapshot creation, so each query field does
 not scan the configured catalog. Only decoded matching names are removed; the
-original encoding, order and repeated values of retained fields are preserved.
+original encoding, order, repeated values and empty retained wire fields are preserved.
+The query delimiter is removed only when no fields remain.
 No header policy settings are required or supported.
 Early gateway rejections (missing service segment, invalid target, unsupported
 protocol, and concurrency limit) emit the same redacted completion event with
