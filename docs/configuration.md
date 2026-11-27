@@ -17,6 +17,7 @@ loopback upstreams. No deployment or public package publication is required.
 | ProgrammaticRules | null | Typed `Func<JsonElement>` returning one complete document, explicit override. |
 | ReloadOnChange | true | Poll selected source approximately every second. |
 | MaxBodySizeBytes | 1048576 | Inspected JSON only; valid range 1–16777216. Other bodies stream. |
+| AllowedJsonMediaTypes | [] | Exact additional `+json` media types for body inspection, e.g. `application/problem+json`. Maximum 64 entries, each up to 256 characters; no wildcard or parameters. |
 | MaxConcurrentRequests | 64 | Per gateway runtime; range 1–1024; excess receives 503. |
 | ProxyTimeoutSeconds | 30 | YARP activity timeout, 1–300 seconds; connection timeout 10 seconds. Not an overall deadline. |
 | AllowedEnvironments | Development | Other non-production names require explicit approval. Production always rejected. |
@@ -207,6 +208,7 @@ uses only the media type. Selected text values
 are charged before serialization even for presence operators. Budget exhaustion
 returns a sanitized 400 without a proxy fallback. An action that does not inspect
 these sources does not incur those inspection charges or modify the values.
+Body inspection always admits `application/json`; other structured-suffix JSON media types require explicit startup admission in `AllowedJsonMediaTypes`. Matching media type names is case-insensitive and ignores request parameters. This setting is not a proxy filter: requests that do not need body inspection retain their original media type and bytes. Content-type conditions can still inspect any valid media type.
 Body selector caching is bounded to twice the inspected
 body byte limit. Inspection is lazy; malformed JSON (including duplicate object
 names, invalid UTF-8 and unpaired Unicode surrogate escapes) returns 400,

@@ -106,7 +106,7 @@ The host owns operational settings. The optional `MockProxyGateway` section can 
 }
 ```
 
-These are illustrative operational settings, not measured performance recommendations. `ProxyTimeoutSeconds` is YARP's activity timeout, not an overall deadline. Additional startup settings are `MaxConcurrentRequests` (64), `AuthorizationPolicy` (optional existing host policy), `FixtureRoot` (trusted directory), `AllowedDestinationAuthorities`, `AllowedDestinationAddresses` and `AllowLoopbackForTests` (false). Authority and IP lists are empty by default. A proxy destination must be explicitly approved; the sample `.test` domains cannot be forwarded without operator configuration.
+These are illustrative operational settings, not measured performance recommendations. `ProxyTimeoutSeconds` is YARP's activity timeout, not an overall deadline. Additional startup settings are `AllowedJsonMediaTypes` (empty; exact additional `+json` media types for body inspection), `MaxConcurrentRequests` (64), `AuthorizationPolicy` (optional existing host policy), `FixtureRoot` (trusted directory), `AllowedDestinationAuthorities`, `AllowedDestinationAddresses` and `AllowLoopbackForTests` (false). Authority and IP lists are empty by default. A proxy destination must be explicitly approved; the sample `.test` domains cannot be forwarded without operator configuration.
 
 ### Rules: mock-proxy-gateway.json
 

@@ -1500,6 +1500,57 @@ public sealed class ForwardingTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task StructuredSuffixJsonRequiresStartupAdmissionWithoutFilteringProxyHeaders(bool admitted)
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"explicit-real","priority":10,"conditions":{"source":"header","key":"X-Test-Scenario","operator":"equals","value":"real"},
+                "action":{"mode":"proxy","destination":"real"}},
+               {"id":"body","priority":1,"conditions":{"source":"body","key":"$.selected","operator":"equals","value":true},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        await using var gateway = await StartGatewayAsync(rules, upstream,
+            configure: o => o.AllowedJsonMediaTypes = admitted ? ["application/problem+json"] : []);
+        using var client = gateway.GetTestClient();
+        var ct = TestContext.Current.CancellationToken;
+        const string mediaType = "Application/Problem+Json";
+        // Mutating host options after startup cannot enable or disable inspection.
+        gateway.Services.GetRequiredService<IOptions<GatewayOptions>>().Value.AllowedJsonMediaTypes =
+            admitted ? [] : ["application/problem+json"];
+        using var matchingBody = new StringContent("{\"selected\":true}", Encoding.UTF8, mediaType);
+        using var matching = await client.PostAsync("/mock-proxy/a/check", matchingBody, ct);
+        Assert.Equal(admitted ? HttpStatusCode.Accepted : HttpStatusCode.UnsupportedMediaType, matching.StatusCode);
+        Assert.Empty(upstream.Requests);
+        using var unconfiguredBody = new StringContent("{\"selected\":true}", Encoding.UTF8, "application/other+json");
+        using var unconfigured = await client.PostAsync("/mock-proxy/a/check", unconfiguredBody, ct);
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, unconfigured.StatusCode);
+        Assert.Empty(upstream.Requests);
+        using var standardBody = new StringContent("{\"selected\":true}", Encoding.UTF8, "application/json");
+        using var standard = await client.PostAsync("/mock-proxy/a/check", standardBody, ct);
+        Assert.Equal(HttpStatusCode.Accepted, standard.StatusCode);
+        Assert.Empty(upstream.Requests);
+        const string payload = "{ \"selected\": false }";
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/mock-proxy/a/check")
+        {
+            Content = new StringContent(payload, Encoding.UTF8, mediaType)
+        };
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer synthetic");
+        if (!admitted)
+            request.Headers.Add("X-Test-Scenario", "real");
+        using var forwarded = await client.SendAsync(request, ct);
+        Assert.Equal(HttpStatusCode.Created, forwarded.StatusCode);
+        var actual = Assert.Single(upstream.Requests);
+        Assert.Equal(payload, actual.Body);
+        Assert.Equal("Bearer synthetic", actual.Authorization);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task HostBodyLimitRejectionCannotReachDefaultProxy(bool chunked)
     {
         await using var upstream = await Upstream.StartAsync();

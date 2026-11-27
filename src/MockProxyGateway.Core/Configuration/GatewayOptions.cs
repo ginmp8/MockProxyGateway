@@ -34,6 +34,8 @@ public sealed class GatewayOptions
     public bool ReloadOnChange { get; set; } = true;
     /// <summary>Maximum inspected JSON body bytes.</summary>
     public int MaxBodySizeBytes { get; set; } = 1_048_576;
+    /// <summary>Additional exact structured-suffix JSON media types admitted for body inspection.</summary>
+    public string[] AllowedJsonMediaTypes { get; set; } = [];
     /// <summary>Maximum concurrent gateway requests.</summary>
     public int MaxConcurrentRequests { get; set; } = 64;
     /// <summary>YARP activity timeout in seconds.</summary>
@@ -57,6 +59,7 @@ public sealed class GatewayOptions
         // The runtime must never observe later changes to startup-only controls.
         var copy = (GatewayOptions)MemberwiseClone();
         copy.AllowedEnvironments = AllowedEnvironments?.ToArray();
+        copy.AllowedJsonMediaTypes = AllowedJsonMediaTypes?.ToArray() ?? [];
         copy.AllowedDestinationAuthorities = AllowedDestinationAuthorities.ToArray();
         copy.AllowedDestinationAddresses = AllowedDestinationAddresses.ToArray();
         return copy;

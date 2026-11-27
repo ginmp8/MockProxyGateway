@@ -251,7 +251,7 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
         var request = context.Request;
         if (!MediaTypeHeaderValue.TryParse(request.ContentType, out var type) ||
             !(string.Equals(type.MediaType.Value, "application/json", StringComparison.OrdinalIgnoreCase) ||
-                (type.MediaType.Value?.EndsWith("+json", StringComparison.OrdinalIgnoreCase) ?? false)))
+                options.AllowedJsonMediaTypes.Contains(type.MediaType.Value!, StringComparer.OrdinalIgnoreCase)))
             throw new RequestFailure(415, "body-media-type");
         if (request.ContentLength > options.MaxBodySizeBytes)
             throw new RequestFailure(413, "body-size");

@@ -313,6 +313,39 @@ public sealed class ConfigurationTests
         }
     }
 
+    [Theory]
+    [InlineData("application/*+json")]
+    [InlineData("text/plain")]
+    [InlineData("application/problem+json; charset=utf-8")]
+    [InlineData("invalid+json")]
+    [InlineData(" application/problem+json")]
+    public async Task InvalidAdditionalJsonMediaTypeRejectsActivation(string mediaType)
+    {
+        var builder = TestHosting.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Configuration["MockProxyGateway:AllowedJsonMediaTypes:0"] = mediaType;
+        builder.Services.AddMockProxyGateway(o => o.ProgrammaticRules = () => JsonElement.Parse(Rules));
+        await using var app = builder.Build();
+        Assert.Throws<InvalidOperationException>(() => app.UseMockProxyGateway());
+    }
+
+    [Fact]
+    public async Task ConfiguredAdditionalJsonMediaTypeUsesHostConfiguration()
+    {
+        var builder = TestHosting.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Configuration["MockProxyGateway:AllowedJsonMediaTypes:0"] = "application/problem+json";
+        builder.Services.AddMockProxyGateway(o => o.ProgrammaticRules = () => JsonElement.Parse(Rules));
+        await using var app = builder.Build();
+        app.UseMockProxyGateway();
+        var ct = TestContext.Current.CancellationToken;
+        await app.StartAsync(ct);
+        using var client = app.GetTestClient();
+        using var body = new StringContent("""{"value":42,"flag":true,"nullable":null}""", Encoding.UTF8, "application/problem+json");
+        using var result = await client.PostAsync("/mock-proxy/demo/check", body, ct);
+        Assert.Equal(HttpStatusCode.Created, result.StatusCode);
+    }
+
     [Fact]
     public async Task StartupOptionsRemainFixedWhileSelectedProviderReloads()
     {
