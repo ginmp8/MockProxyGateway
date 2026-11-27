@@ -45,7 +45,9 @@ Registering DI alone is inert, including in Production.
   from the host configuration pipeline are polled. The serialized section must be
   a single scalar: children contributed by any configuration provider are invalid,
   even if a valid serialized value also exists. File and Inline reject any competing
-  serialized section, including flattened children. An explicit C# RulesJson assignment
+  serialized section, including flattened children. For configured source selection,
+  omit unused rule-source keys entirely: an explicitly null competing `Rules` or
+  `RulesJson` key is still a conflicting definition. An explicit C# RulesJson assignment
   is fixed at startup, even when equal to the original bound value.
 - **Explicit IConfiguration:** call `builder.Services.AddMockProxyGateway(configSection)`
   with a scalar section containing JSON and no children, or a dedicated configuration containing only

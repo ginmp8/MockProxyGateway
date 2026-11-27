@@ -67,7 +67,7 @@ internal sealed partial class RuleStore : IAsyncDisposable
             bytes = ReadInline();
         else if (string.Equals(_options.RuleSource, "Configuration", StringComparison.OrdinalIgnoreCase))
         {
-            if (_configuration.GetSection("MockProxyGateway:Rules").Exists())
+            if (HasConfiguredRuleSource("Rules"))
                 throw new InvalidOperationException("Conflicting inline and serialized rule sources.");
             var serialized = _configuration.GetSection("MockProxyGateway:RulesJson");
             if (serialized.GetChildren().Any())
@@ -78,8 +78,8 @@ internal sealed partial class RuleStore : IAsyncDisposable
         }
         else if (string.Equals(_options.RuleSource, "File", StringComparison.OrdinalIgnoreCase))
         {
-            if (_configuration.GetSection("MockProxyGateway:Rules").Exists() ||
-                _configuration.GetSection("MockProxyGateway:RulesJson").Exists() || _explicitSerialized is not null)
+            if (HasConfiguredRuleSource("Rules") ||
+                HasConfiguredRuleSource("RulesJson") || _explicitSerialized is not null)
                 throw new InvalidOperationException("Conflicting file and inline/serialized rule sources.");
             var path = Path.GetFullPath(_options.ConfigurationFile, _environment.ContentRootPath);
             using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
@@ -96,6 +96,12 @@ internal sealed partial class RuleStore : IAsyncDisposable
             throw new InvalidOperationException("Rule document too large.");
         return bytes;
     }
+
+    // Exists() treats a null-valued leaf without children as missing. Source
+    // ownership depends on whether the provider defines the key, not its value.
+    private bool HasConfiguredRuleSource(string name) =>
+        _configuration.GetSection("MockProxyGateway").GetChildren()
+            .Any(section => string.Equals(section.Key, name, StringComparison.OrdinalIgnoreCase));
 
     // Validate serialized documents before allocating or parsing them. In
     // particular, never silently replace unpaired UTF-16 surrogates, or let a
@@ -124,7 +130,7 @@ internal sealed partial class RuleStore : IAsyncDisposable
     private byte[] ReadInline()
     {
         const string section = "MockProxyGateway:Rules";
-        if (_configuration.GetSection("MockProxyGateway:RulesJson").Exists() || _explicitSerialized is not null ||
+        if (HasConfiguredRuleSource("RulesJson") || _explicitSerialized is not null ||
             _configuration is not IConfigurationRoot root)
             throw new InvalidOperationException("Conflicting or unsupported inline rule source.");
         var providers = root.Providers.Where(provider =>
