@@ -606,10 +606,12 @@ public sealed class ConfigurationTests
     }
 
     [Theory]
-    [InlineData("File")]
-    [InlineData("Inline")]
-    [InlineData("Configuration")]
-    public async Task ExplicitNullCompetingRuleSourceRejectsActivation(string source)
+    [InlineData("File", false)]
+    [InlineData("Inline", false)]
+    [InlineData("Configuration", false)]
+    [InlineData("File", true)]
+    [InlineData("Inline", true)]
+    public async Task ExplicitNullCompetingRuleSourceRejectsActivation(string source, bool explicitAssignment)
     {
         var ct = TestContext.Current.CancellationToken;
         var directory = Directory.CreateTempSubdirectory("mock-proxy-source-conflict-").FullName;
@@ -631,11 +633,16 @@ public sealed class ConfigurationTests
             builder.WebHost.UseTestServer();
             // An explicitly defined null document is not an omitted source.
             // Do not accept a conflicting source definition as if it were absent.
-            builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            if (explicitAssignment)
+                builder.Services.AddMockProxyGateway(o => o.RulesJson = null);
+            else
             {
-                [source == "Configuration" ? "MockProxyGateway:Rules" : "MockProxyGateway:RulesJson"] = null
-            });
-            builder.Services.AddMockProxyGateway();
+                builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    [source == "Configuration" ? "MockProxyGateway:Rules" : "MockProxyGateway:RulesJson"] = null
+                });
+                builder.Services.AddMockProxyGateway();
+            }
             await using var app = builder.Build();
             Assert.Throws<InvalidOperationException>(() => app.UseMockProxyGateway());
         }
@@ -661,22 +668,24 @@ public sealed class ConfigurationTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ConflictingExplicitRuleSourcesAreRejected(bool externalConfiguration)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task ConflictingExplicitRuleSourcesAreRejected(bool externalConfiguration, bool nullAssignment)
     {
         var builder = TestHosting.CreateBuilder();
         if (externalConfiguration)
         {
             var external = new ConfigurationBuilder().AddInMemoryCollection(
                 new Dictionary<string, string?> { ["RulesJson"] = Rules }).Build();
-            builder.Services.AddMockProxyGateway(external, o => o.RulesJson = Rules);
+            builder.Services.AddMockProxyGateway(external, o => o.RulesJson = nullAssignment ? null : Rules);
         }
         else
         {
             builder.Services.AddMockProxyGateway(o =>
             {
-                o.RulesJson = Rules;
+                o.RulesJson = nullAssignment ? null : Rules;
                 o.ProgrammaticRules = () => JsonElement.Parse(Rules);
             });
         }
