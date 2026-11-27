@@ -551,7 +551,7 @@ internal static class BoundedJsonPathFilter
         return true;
     }
 
-    private static (JsonPath? Argument, int? LiteralLength) ReadLengthArgument(string path, ref int cursor, ref bool usesRepeatedTraversal, ref bool usesPrivateValueQuery)
+    private static (JsonPath? Argument, int? LiteralLength) ReadLengthArgument(string path, ref int cursor, ref bool usesRepeatedTraversal, ref bool usesPrivateValueQuery, bool allowNumericFunction = true)
     {
         Require(path, ref cursor, "(");
         SkipWhitespace(path, ref cursor);
@@ -559,6 +559,11 @@ internal static class BoundedJsonPathFilter
             throw Invalid();
         JsonPath? argument = null;
         int? literalLength = null;
+        if (allowNumericFunction && TryReadNonStringFunction(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery))
+        {
+            Require(path, ref cursor, ")");
+            return (null, null);
+        }
         if (Take(path, ref cursor, "value"))
             argument = ReadValueQuery(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery);
         else if (path[cursor] is '@' or '$')
@@ -571,6 +576,23 @@ internal static class BoundedJsonPathFilter
         }
         Require(path, ref cursor, ")");
         return (argument, literalLength);
+    }
+
+    // Count returns a number; length returns a number or Nothing. Neither
+    // can supply a string, array or object to a length/regex operand. Validate
+    // the complete bounded inner argument and keep its original work flags,
+    // then fold the result without an unnecessary request-time traversal.
+    private static bool TryReadNonStringFunction(string path, ref int cursor, ref bool usesRepeatedTraversal, ref bool usesPrivateValueQuery)
+    {
+        if (Take(path, ref cursor, "count"))
+        {
+            _ = ReadValueQuery(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery);
+            return true;
+        }
+        if (!Take(path, ref cursor, "length"))
+            return false;
+        _ = ReadLengthArgument(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery, allowNumericFunction: false);
+        return true;
     }
 
     private static bool TryReadReversedLengthFilter(string path, ref int index, string operand,
@@ -631,15 +653,17 @@ internal static class BoundedJsonPathFilter
             argument = ReadValueQuery(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery);
         else if (path[cursor] is '@' or '$')
             argument = ReadSingularQuery(path, ref cursor, ref usesRepeatedTraversal);
-        else
+        else if (!TryReadNonStringFunction(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery))
         {
             var literal = ReadScalarLiteral(path, ref cursor);
             if (literal.ValueKind == JsonValueKind.String)
                 literalArgument = literal.GetString();
         }
         Require(path, ref cursor, ",");
-        // Dynamic patterns remain rejected: compilation work is configuration-owned.
-        var patternLiteral = ReadScalarLiteral(path, ref cursor);
+        // Dynamic string patterns remain rejected: compilation work is configuration-owned.
+        // A statically non-string function result is always logical false.
+        var patternLiteral = TryReadNonStringFunction(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery)
+            ? default : ReadScalarLiteral(path, ref cursor);
         Require(path, ref cursor, ")");
         var pattern = patternLiteral.ValueKind == JsonValueKind.String
             ? BoundedRegexFilterSelector.Compile(patternLiteral.GetString()!, fullMatch)
