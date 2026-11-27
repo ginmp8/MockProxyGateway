@@ -40,7 +40,7 @@ internal static class BoundedJsonPathFilter
             {
                 if (Take(path, ref index, "?"))
                 {
-                    if (ContainsLocalFunction(path, index))
+                    if (RequiresLocalPredicate(path, index))
                     {
                         var start = index;
                         var parser = new LocalExpressionParser(path, index, usesRepeatedTraversal, maxUnionProduct,
@@ -76,11 +76,11 @@ internal static class BoundedJsonPathFilter
         return normalized.ToString();
     }
 
-    // Detect private function calls anywhere in the current predicate, skipping
-    // quoted strings. Nested private calls require explicit selector replacement.
-    // Ordinary expressions retain the
-    // original admission and normalization path.
-    private static bool ContainsLocalFunction(string path, int index)
+    // Detect private functions or document-root references in a nested
+    // predicate, skipping quoted strings. Both need a local selector to
+    // preserve the original root while traversing the relative query.
+    // Ordinary outer predicates retain the existing library evaluation path.
+    private static bool RequiresLocalPredicate(string path, int index, bool insideNestedFilter = false)
     {
         var brackets = 0;
         var parentheses = 0;
@@ -92,6 +92,8 @@ internal static class BoundedJsonPathFilter
                 ReadQuoted(path, ref index);
                 continue;
             }
+            if (current == '$' && (insideNestedFilter || brackets > 0))
+                return true;
             if (current == '[')
                 brackets++;
             else if (current == ']')
@@ -366,7 +368,16 @@ internal static class BoundedJsonPathFilter
                         return leftContainsPrivate ? CompareValue(actual, operand, comparison!) : CompareValue(operand, actual, comparison!);
                     };
                 }
-                return (root, candidate) => EvaluateNestedQuery(query, root, candidate).Count() != 0;
+                return (root, candidate) =>
+                {
+                    // Consume the entire bounded nodelist, as before. Stopping at
+                    // the first match could hide an inspection failure in a later
+                    // candidate and change the selected action under negation.
+                    var hasMatch = false;
+                    foreach (var _ in EvaluateNestedQuery(query, root, candidate))
+                        hasMatch = true;
+                    return hasMatch;
+                };
             }
 
             if (!JsonPath.TryParse("$[?" + expression.ToString().Trim() + "]", out var parsed) ||
@@ -857,7 +868,7 @@ internal static class BoundedJsonPathFilter
                     if (filterDepth != 0 || hasNestedFilter)
                         throw Invalid();
                     hasNestedFilter = true;
-                    if (ContainsLocalFunction(path, index))
+                    if (RequiresLocalPredicate(path, index, insideNestedFilter: true))
                     {
                         if (nestedPrivateReader is null)
                             throw Invalid();

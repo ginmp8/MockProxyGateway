@@ -1623,6 +1623,11 @@ public sealed class ForwardingTests
     [InlineData("$.items[?value(@.nested[?search($.label, 'z')].name) == 'é']", false, 201, 1)]
     [InlineData("$.items[?@.nested[?match($.label, '..')]]", true, 400, 0)]
     [InlineData("$.items[?@.nested[?length(@.name) == length($.label)]]", true, 400, 0)]
+    [InlineData("$.items[?@.nested[?@.name == $.label]]", false, 202, 0)]
+    [InlineData("$.items[?@.nested[?@.name != $.label]]", false, 201, 1)]
+    [InlineData("$.items[?count(@.nested[?@.name == $.label]) == 1]", false, 202, 0)]
+    [InlineData("$.items[?value(@.nested[?@.name == $.label].name) == 'é']", false, 202, 0)]
+    [InlineData("$.items[?@.nested[?@.name == $.label]]", true, 400, 0)]
     public async Task NestedPrivateFilterUsesCandidateScopeAndFailsClosed(string selector, bool large, int status, int calls)
     {
         Assert.True(Json.Path.FunctionRepository.TryGet("length", out var length));
