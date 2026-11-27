@@ -924,6 +924,17 @@ internal static class BoundedJsonPathFilter
         var descentCount = 0;
         while (index < path.Length)
         {
+            // RFC 9535 permits blank space before each query segment.
+            // Do not consume trailing expression whitespace, alter quoted
+            // literals or admit whitespace inside a shorthand segment.
+            var segmentStart = index;
+            while (index < path.Length && path[index] is ' ' or '\t' or '\r' or '\n')
+                index++;
+            if (index == path.Length || path[index] is not ('.' or '['))
+            {
+                index = segmentStart;
+                break;
+            }
             // Two descents may multiply overlapping paths. The compiler
             // requests a separate cubic precharge for that query shape.
             var descendant = path.AsSpan(index).StartsWith("..", StringComparison.Ordinal);

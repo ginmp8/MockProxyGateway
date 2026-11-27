@@ -211,6 +211,8 @@ repeated predicate traversals. This conservative cubic charge can reject otherwi
 valid complex selectors on moderately sized inputs before library evaluation.
 Filters also validate all numeric values in the inspected body once before the
 first filter, rejecting values that cannot be represented exactly as decimals.
+RFC 9535 blank space (space, tab, carriage return and line feed) before relative or root query segments inside filters is accepted without changing quoted property names or the existing traversal and evaluation limits.
+
 Numeric range comparisons reject unsupported decimal precision rather than rounding. Repeated comparisons of numeric JSON tokens (including equality and membership) charge their raw token length against the shared evaluation budget, even when the selected value is cached. Condition depth is at most 12; rule count 4096; condition nodes
 16384; body nodes 16384; weighted evaluation budget 65536; at most 64 regex
 evaluations per request. Query and cookie inspection charges the complete
