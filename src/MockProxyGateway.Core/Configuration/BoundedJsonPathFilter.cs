@@ -255,6 +255,7 @@ internal static class BoundedJsonPathFilter
                     ref _maxUnionProduct, ref _hasNestedFilter, ref _hasRepeatedPredicateDescent, 0, ReadNestedPrivate);
             }
 
+            var repeatedBeforeLeaf = _usesRepeatedTraversal;
             var left = ReadLocalOperand(ref _index, out var leftLength);
             var leftEnd = _index;
             var leftContainsPrivate = nestedPrivate is not null;
@@ -299,6 +300,7 @@ internal static class BoundedJsonPathFilter
                 string? function = null;
                 JsonElement expected = default;
                 JsonPath? expectedQuery = null;
+                var expectedFromRoot = false;
                 string? expectedFunction = null;
                 var expectedLength = leftContainsPrivate ? rightLength : leftLength;
                 if (comparison is not null)
@@ -334,6 +336,14 @@ internal static class BoundedJsonPathFilter
                             expectedQuery.Segments.Length > 16)
                             throw Invalid();
                     }
+                    else if (expectedLength is null && rightText.StartsWith('$'))
+                    {
+                        if (expectedFunction is not null ||
+                            !JsonPath.TryParse(rightText, out expectedQuery) ||
+                            !expectedQuery.IsSingular || expectedQuery.Segments.Length > 16)
+                            throw Invalid();
+                        expectedFromRoot = true;
+                    }
                     else if (expectedLength is null)
                     {
                         expected = ReadComparisonLiteral(rightText);
@@ -356,6 +366,16 @@ internal static class BoundedJsonPathFilter
                 }
                 if (replaced != 1)
                     throw Invalid();
+                if (expectedFromRoot)
+                {
+                    // The enclosing selection remains relative and non-overlapping.
+                    // The existing nested-filter quadratic precharge covers the
+                    // singular document-root operand as well.
+                    if (ContainsUnquotedDescent(path, leafStart, _index) ||
+                        query.Segments.Any(segment => segment.IsRecursive || segment.Selectors.Length != 1))
+                        throw Invalid();
+                    _usesRepeatedTraversal = repeatedBeforeLeaf;
+                }
                 if (function is not null)
                 {
                     return (root, candidate) =>
@@ -364,7 +384,7 @@ internal static class BoundedJsonPathFilter
                         var operand = expectedLength is { } length
                             ? LengthValue(length.Query, length.Literal, candidate)
                             : expectedQuery is null ? expected :
-                                EvaluateComparisonQuery(expectedQuery, expectedFunction, candidate);
+                                EvaluateComparisonQuery(expectedQuery, expectedFunction, expectedFromRoot ? root : candidate);
                         return leftContainsPrivate ? CompareValue(actual, operand, comparison!) : CompareValue(operand, actual, comparison!);
                     };
                 }

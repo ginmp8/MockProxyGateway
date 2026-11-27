@@ -29,6 +29,18 @@ public sealed partial class RegexBoundaryTests
         Assert.Null(failure.InnerException);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TrailingClassHyphenCountsTowardsMemberLimit(bool withCategory)
+    {
+        var prefix = withCategory ? @"\p{L}" : "a";
+        var valid = "[" + prefix + new string('b', 30) + "-]";
+        Assert.True(BoundedRegexFilterSelector.Compile(valid, true).IsMatch("-"));
+        var invalid = "[" + prefix + new string('b', 31) + "-]";
+        Assert.Throws<InvalidOperationException>(() => BoundedRegexFilterSelector.Compile(invalid, true));
+    }
+
     [GeneratedRegex("^(a+)+$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1)]
     private static partial Regex TimeoutPattern();
 }

@@ -182,7 +182,7 @@ internal sealed class BoundedRegexFilterSelector(JsonPath? argument, bool? liter
             if (ranges.Count + propertyCount > 32)
                 throw Invalid();
         }
-        if (ranges.Count + propertyCount == 0 || index >= pattern.Length || pattern[index++] != ']')
+        if (ranges.Count + propertyCount is 0 or > 32 || index >= pattern.Length || pattern[index++] != ']')
             throw Invalid();
         if (alphabet is not null)
         {
