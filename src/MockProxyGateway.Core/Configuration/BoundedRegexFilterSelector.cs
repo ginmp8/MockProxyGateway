@@ -244,6 +244,21 @@ internal sealed class BoundedRegexFilterSelector(JsonPath? argument, bool? liter
     {
         internal bool IsMatch(string text) =>
             RuleResolver.MatchRegex(regex, alphabet is null ? text : alphabet.Encode(text));
+
+        // Constant predicates are evaluated during rule compilation, not within
+        // a request. A timeout must reject the candidate snapshot instead of
+        // escaping as a request-only failure and terminating the reload loop.
+        internal bool IsMatchAtCompilation(string text)
+        {
+            try
+            {
+                return regex.IsMatch(alphabet is null ? text : alphabet.Encode(text));
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                throw new InvalidOperationException("JSONPath constant regex evaluation timed out.");
+            }
+        }
     }
 
     // Partition scalar intervals and Unicode general categories by atom

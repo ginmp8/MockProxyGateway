@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using MockProxyGateway.Configuration;
 using MockProxyGateway.Matching;
 using Xunit;
 
@@ -16,6 +17,16 @@ public sealed partial class RegexBoundaryTests
             TimeoutPattern(), new string('a', 4096) + "!"));
         Assert.Equal(400, failure.StatusCode);
         Assert.Equal("regex-timeout", failure.Category);
+    }
+
+    [Fact]
+    public void ActualEngineTimeoutDuringConstantEvaluationRejectsConfiguration()
+    {
+        var pattern = new BoundedRegexFilterSelector.CompiledPattern(TimeoutPattern(), null);
+        var failure = Assert.Throws<InvalidOperationException>(() =>
+            pattern.IsMatchAtCompilation(new string('a', 4096) + "!"));
+        Assert.Equal("JSONPath constant regex evaluation timed out.", failure.Message);
+        Assert.Null(failure.InnerException);
     }
 
     [GeneratedRegex("^(a+)+$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1)]

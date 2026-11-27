@@ -647,7 +647,7 @@ internal static class BoundedJsonPathFilter
         // Non-string arguments are logical false, never coerced to text.
         // Constant input/pattern pairs are evaluated at activation.
         bool? literalResult = pattern is null ? false : argument is not null ? null :
-            literalArgument is not null && pattern.IsMatch(literalArgument);
+            literalArgument is not null && pattern.IsMatchAtCompilation(literalArgument);
         selector = new BoundedRegexFilterSelector(argument, literalResult, pattern, path[expressionStart..cursor]);
         index = cursor;
         return true;
