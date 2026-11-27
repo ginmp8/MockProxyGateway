@@ -1784,6 +1784,12 @@ public sealed class ForwardingTests
     [InlineData("$.items[?value(@.score) >= 10]")]
     [InlineData("$.items[?count($.items[0:1]) == 1 && @.score >= 10]")]
     [InlineData("$.items[?value($.items[0:1].score) >= 10]")]
+    [InlineData("$.items[?@ .score >= 10]")]
+    [InlineData("$.items[?@ ['score'] >= 10]")]
+    [InlineData("$.items[?@.score >= $ .min]")]
+    [InlineData("$.items[?count(@ .score) == 1 && @.score >= 10]")]
+    [InlineData("$.items[?value(@\t.score) >= 10]")]
+    [InlineData("$.items[?@.score >= $\r\n.min]")]
     public async Task FilterInspectionSelectsMockOrRealAndFailsClosedBeforeAnyAdditionalCall(string selector)
     {
         await using var upstream = await Upstream.StartAsync();
