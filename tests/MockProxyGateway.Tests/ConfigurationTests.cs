@@ -652,6 +652,40 @@ public sealed class ConfigurationTests
         }
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task HostOptionsExplicitNullCannotBeIgnoredAsAnOmittedRuleSource(bool typed, bool postConfigure)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var directory = Directory.CreateTempSubdirectory("mock-proxy-options-origin-").FullName;
+        try
+        {
+            var file = Path.Combine(directory, "mock-proxy-gateway.json");
+            await File.WriteAllTextAsync(file, Rules, ct);
+            var builder = TestHosting.CreateBuilder();
+            builder.Services.AddMockProxyGateway(options =>
+            {
+                options.ConfigurationFile = file;
+                if (typed)
+                    options.ProgrammaticRules = () => JsonElement.Parse(Rules);
+            });
+            // Host-owned standard options registrations are also explicit assignments.
+            if (postConfigure)
+                builder.Services.PostConfigure<GatewayOptions>(options => options.RulesJson = null);
+            else
+                builder.Services.Configure<GatewayOptions>(options => options.RulesJson = null);
+            await using var app = builder.Build();
+            Assert.Throws<InvalidOperationException>(() => app.UseMockProxyGateway());
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task ExplicitScalarSectionWithNullChildRejectsActivation()
     {
