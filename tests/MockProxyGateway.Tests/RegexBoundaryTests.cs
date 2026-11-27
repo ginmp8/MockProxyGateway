@@ -41,6 +41,28 @@ public sealed partial class RegexBoundaryTests
         Assert.Throws<InvalidOperationException>(() => BoundedRegexFilterSelector.Compile(invalid, true));
     }
 
+    [Theory]
+    [InlineData("p")]
+    [InlineData("P")]
+    public void EscapedBackslashDoesNotSelectCategoryAlphabet(string letter)
+    {
+        var suffix = new string('a', 65);
+        var pattern = BoundedRegexFilterSelector.Compile(@"\\"
+            + letter + suffix, true);
+        Assert.True(pattern.IsMatch(@"\" + letter + suffix));
+        Assert.False(pattern.IsMatch(letter + suffix));
+    }
+
+    [Fact]
+    public void GenuineCategoryAfterEscapedBackslashRetainsScalarSemantics()
+    {
+        var pattern = BoundedRegexFilterSelector.Compile(@"\\p\p{L}", true);
+        Assert.True(pattern.IsMatch(@"\pA"));
+        Assert.False(pattern.IsMatch(@"\p1"));
+        Assert.Throws<InvalidOperationException>(() =>
+            BoundedRegexFilterSelector.Compile(@"\p{L}" + new string('a', 65), true));
+    }
+
     [GeneratedRegex("^(a+)+$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 1)]
     private static partial Regex TimeoutPattern();
 }

@@ -33,8 +33,7 @@ internal sealed class BoundedRegexFilterSelector(JsonPath? argument, bool? liter
     internal static CompiledPattern Compile(string pattern, bool fullMatch)
     {
         // Retain the direct translation for patterns without property escapes.
-        var alphabet = pattern.Contains(@"\p", StringComparison.Ordinal) ||
-            pattern.Contains(@"\P", StringComparison.Ordinal) ? new ScalarAlphabet() : null;
+        var alphabet = ContainsCategoryEscape(pattern) ? new ScalarAlphabet() : null;
         var mapped = new StringBuilder();
         var index = 0;
         var depth = 0;
@@ -132,6 +131,20 @@ internal sealed class BoundedRegexFilterSelector(JsonPath? argument, bool? liter
         var source = fullMatch ? @"\A(?:" + translated + @")\z" : translated;
         return new CompiledPattern(new Regex(source, RegexOptions.CultureInvariant | RegexOptions.NonBacktracking,
             TimeSpan.FromMilliseconds(25)), alphabet);
+    }
+
+    // Skip complete escape pairs: a literal backslash followed by p or P is
+    // not a property escape and must not consume the private alphabet budget.
+    private static bool ContainsCategoryEscape(string pattern)
+    {
+        for (var index = 0; index + 1 < pattern.Length; index++)
+        {
+            if (pattern[index] != '\\')
+                continue;
+            if (pattern[++index] is 'p' or 'P')
+                return true;
+        }
+        return false;
     }
 
     // Work in scalar intervals, not UTF-16 code units. Negation must never

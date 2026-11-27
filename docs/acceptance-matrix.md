@@ -80,6 +80,6 @@ evaluation for supported selectors, including slices, bounded unions, up to two 
 configuration classification boundaries. A constant regex timeout during rule
 compilation is an invalid candidate configuration, not a request failure; the
 reload loop retains the last good snapshot. Production rules use nonbacktracking
-patterns and bounded evaluation. The DNS oracle uses a local
+patterns and bounded evaluation. RegexBoundaryTests.EscapedBackslashDoesNotSelectCategoryAlphabet and GenuineCategoryAfterEscapedBackslashRetainsScalarSemantics distinguish literal backslashes from actual category escapes; the loopback regex matrix covers positive and negative long literal alternatives without unnecessary alphabet rejection. The DNS oracle uses a local
 TCP listener to detect forbidden connection attempts; external DNS rebinding
 and deployment network policy are not exercised against real systems.
