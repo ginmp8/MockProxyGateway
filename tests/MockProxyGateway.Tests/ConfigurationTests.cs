@@ -605,6 +605,21 @@ public sealed class ConfigurationTests
         }
     }
 
+    [Fact]
+    public async Task ExplicitScalarSectionWithNullChildRejectsActivation()
+    {
+        var builder = TestHosting.CreateBuilder();
+        var external = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["GatewayRules"] = Rules,
+                ["GatewayRules:RulesJson"] = null
+            }).Build();
+        builder.Services.AddMockProxyGateway(external.GetSection("GatewayRules"));
+        await using var app = builder.Build();
+        Assert.Throws<InvalidOperationException>(() => app.UseMockProxyGateway());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

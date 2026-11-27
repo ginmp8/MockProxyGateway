@@ -844,6 +844,58 @@ public sealed class ForwardingTests
     }
 
     [Fact]
+    public async Task ExplicitScalarSectionReloadRejectsNullChildBeforeForwarding()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var upstream = await Upstream.StartAsync();
+        using var capture = new CaptureProvider();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"mock","response":{"statusCode":200,"text":"selected"}}}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        using var external = new ConfigurationManager();
+        external.AddInMemoryCollection(new Dictionary<string, string?> { ["GatewayRules"] = rules.ToJsonString() });
+        var builder = TestHosting.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Logging.AddProvider(capture);
+        builder.Logging.SetMinimumLevel(LogLevel.Information);
+        builder.Services.AddMockProxyGateway(external.GetSection("GatewayRules"), options =>
+        {
+            options.AllowLoopbackForTests = true;
+            options.AllowedDestinationAuthorities = [new Uri(upstream.BaseUrl).Authority];
+        });
+        await using var gateway = builder.Build();
+        gateway.UseMockProxyGateway();
+        await gateway.StartAsync(ct);
+        using var client = gateway.GetTestClient();
+        Assert.Equal("selected", await client.GetStringAsync("/mock-proxy/a/check", ct));
+        Assert.Empty(upstream.Requests);
+
+        rules["services"]!["a"]!["default"] = JsonNode.Parse("""
+            {"mode":"proxy","destination":"real"}
+            """);
+        var candidate = rules.ToJsonString();
+        external.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["GatewayRules"] = candidate,
+            ["GatewayRules:RulesJson"] = null
+        });
+        var conflictingSource = external.Sources[^1];
+        await WaitForGatewayLogAsync(capture, "Gateway configuration reload rejected; retaining version 1.", "", ct);
+        Assert.Equal("selected", await client.GetStringAsync("/mock-proxy/a/check", ct));
+        Assert.Empty(upstream.Requests);
+
+        Assert.True(external.Sources.Remove(conflictingSource));
+        external.AddInMemoryCollection(new Dictionary<string, string?> { ["GatewayRules"] = candidate });
+        await WaitForGatewayLogAsync(capture, "Gateway configuration version 2 activated.", "", ct);
+        using var proxy = await client.GetAsync("/mock-proxy/a/check", ct);
+        Assert.Equal(HttpStatusCode.Created, proxy.StatusCode);
+        Assert.Equal("upstream", await proxy.Content.ReadAsStringAsync(ct));
+        Assert.Equal("/check", Assert.Single(upstream.Requests).Target);
+    }
+
+    [Fact]
     public async Task MissingFixtureReloadRecoversWithoutAnotherRuleEdit()
     {
         var ct = TestContext.Current.CancellationToken;
