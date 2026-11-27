@@ -785,8 +785,10 @@ public sealed class ForwardingTests
         Assert.Single(upstream.Requests);
     }
 
-    [Fact]
-    public async Task AmbiguousSerializedRuleReloadCannotReplaceActiveMockWithProxy()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AmbiguousSerializedRuleReloadCannotReplaceActiveMockWithProxy(bool nullInlineSource)
     {
         var ct = TestContext.Current.CancellationToken;
         await using var upstream = await Upstream.StartAsync();
@@ -824,7 +826,7 @@ public sealed class ForwardingTests
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["MockProxyGateway:RulesJson"] = candidate,
-            ["MockProxyGateway:RulesJson:unexpected"] = "synthetic"
+            [nullInlineSource ? "MockProxyGateway:Rules" : "MockProxyGateway:RulesJson:unexpected"] = nullInlineSource ? null : "synthetic"
         });
         var conflictingSource = builder.Configuration.Sources[^1];
         await WaitForGatewayLogAsync(capture, "Gateway configuration reload rejected; retaining version 1.", "", ct);

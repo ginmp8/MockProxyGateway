@@ -605,6 +605,46 @@ public sealed class ConfigurationTests
         }
     }
 
+    [Theory]
+    [InlineData("File")]
+    [InlineData("Inline")]
+    [InlineData("Configuration")]
+    public async Task ExplicitNullCompetingRuleSourceRejectsActivation(string source)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var directory = Directory.CreateTempSubdirectory("mock-proxy-source-conflict-").FullName;
+        try
+        {
+            var settings = new JsonObject { ["MockProxyGateway"] = new JsonObject { ["RuleSource"] = source } };
+            if (source == "Inline")
+                settings["MockProxyGateway"]!["Rules"] = JsonNode.Parse(Rules);
+            if (source == "Configuration")
+                settings["MockProxyGateway"]!["RulesJson"] = Rules;
+            await File.WriteAllTextAsync(Path.Combine(directory, "appsettings.json"), settings.ToJsonString(), ct);
+            if (source == "File")
+                await File.WriteAllTextAsync(Path.Combine(directory, "mock-proxy-gateway.json"), Rules, ct);
+            var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+            {
+                EnvironmentName = "Development",
+                ContentRootPath = directory
+            });
+            builder.WebHost.UseTestServer();
+            // An explicitly defined null document is not an omitted source.
+            // Do not accept a conflicting source definition as if it were absent.
+            builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                [source == "Configuration" ? "MockProxyGateway:Rules" : "MockProxyGateway:RulesJson"] = null
+            });
+            builder.Services.AddMockProxyGateway();
+            await using var app = builder.Build();
+            Assert.Throws<InvalidOperationException>(() => app.UseMockProxyGateway());
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task ExplicitScalarSectionWithNullChildRejectsActivation()
     {
