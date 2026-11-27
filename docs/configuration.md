@@ -155,7 +155,11 @@ queries or value-returning functions. Slices cannot duplicate visits to a candid
 subtree; unions preserve duplicates and are charged for cumulative multiplicity.
 Root queries receive the separate repeated-root work charge even inside functions.
 Negated terms are explicitly grouped before library evaluation to preserve NOT
-precedence. One outer recursive descent may precede, follow or contain an
+precedence. Ordered JSONPath comparisons use Unicode scalar order rather than
+UTF-16 code unit order; two missing query results are equal (and satisfy
+non-strict ordering), while neither strictly precedes the other. The local
+ordered comparator preserves typed values, relative/root scope, count/value
+operands and the existing traversal limits. See RFC 9535 section 2.3.5.2. One outer recursive descent may precede, follow or contain an
 outer filter; two outer descents with a filter incur the cubic precharge. A predicate
 query may contain up to two descents, such as
 `@..tag`, `count(@..tag)` or `count(@..nested..tag)`; such queries are non-singular.

@@ -78,10 +78,10 @@ internal static class BoundedJsonPathFilter
         return normalized.ToString();
     }
 
-    // Detect private functions or document-root references in a nested
-    // predicate, skipping quoted strings. Both need a local selector to
-    // preserve the original root while traversing the relative query.
-    // Ordinary outer predicates retain the existing library evaluation path.
+    // Detect private functions, ordered comparisons or document-root references
+    // in a nested predicate, skipping quoted strings. These need a local selector
+    // for RFC scalar ordering, Nothing semantics or the original root scope.
+    // Other ordinary outer predicates retain the library evaluation path.
     private static bool RequiresLocalPredicate(string path, int index, bool insideNestedFilter = false)
     {
         var brackets = 0;
@@ -95,6 +95,8 @@ internal static class BoundedJsonPathFilter
                 ReadQuoted(path, ref index);
                 continue;
             }
+            if (current is '<' or '>')
+                return true;
             if (current == '$')
             {
                 if (insideNestedFilter || brackets > 0)
@@ -426,6 +428,27 @@ internal static class BoundedJsonPathFilter
                 };
             }
 
+            // The pinned library compares strings by UTF-16 code units and
+            // returns false for <= between two absent query results. Compile
+            // ordered leaves with the same typed comparator as private nested
+            // comparisons. The original parser has already validated operands
+            // and reserved their traversal and union bounds.
+            if (comparison is "<" or ">" or "<=" or ">=")
+            {
+                string OperandText(int from, int to)
+                {
+                    var operand = new StringBuilder(path[from..to]);
+                    foreach (var (offset, character) in grouping.Where(x => x.Offset >= from && x.Offset <= to)
+                        .OrderByDescending(x => x.Offset))
+                        operand.Insert(offset - from, character);
+                    return operand.ToString().Trim();
+                }
+
+                var readLeft = CompileOrderedOperand(OperandText(leafStart, leftEnd));
+                var readRight = CompileOrderedOperand(OperandText(rightStart, _index));
+                return (root, candidate) => CompareValue(readLeft(root, candidate), readRight(root, candidate), comparison);
+            }
+
             if (!JsonPath.TryParse("$[?" + expression.ToString().Trim() + "]", out var parsed) ||
                 parsed.Segments[0].Selectors[0] is not FilterSelector filter)
                 throw Invalid();
@@ -485,6 +508,33 @@ internal static class BoundedJsonPathFilter
             throw Invalid();
         using var document = JsonDocument.Parse(text);
         return document.RootElement.Clone();
+    }
+
+    private static Func<JsonNode?, JsonNode?, JsonElement> CompileOrderedOperand(string text)
+    {
+        string? function = null;
+        if (text.StartsWith("count", StringComparison.Ordinal) || text.StartsWith("value", StringComparison.Ordinal))
+        {
+            var open = text.IndexOf('(');
+            if (open < 0 || !text.EndsWith(')'))
+                throw Invalid();
+            function = text[..open].Trim();
+            if (function is not ("count" or "value"))
+                throw Invalid();
+            text = text[(open + 1)..^1].Trim();
+        }
+        if (text.StartsWith('@') || text.StartsWith('$'))
+        {
+            var fromRoot = text[0] == '$';
+            if (!JsonPath.TryParse("$" + text[1..], out var query) ||
+                (function is null && !query.IsSingular))
+                throw Invalid();
+            return (root, candidate) => EvaluateComparisonQuery(query, function, fromRoot ? root : candidate);
+        }
+        if (function is not null)
+            throw Invalid();
+        var literal = ReadComparisonLiteral(text);
+        return (_, _) => literal;
     }
 
     private static JsonElement LengthValue(JsonPath? query, int? literal, JsonNode? root, JsonNode? candidate) =>
