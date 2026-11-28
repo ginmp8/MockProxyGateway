@@ -894,6 +894,12 @@ public sealed class GatewayTests
     [InlineData("$.١", "{\"١\":42}", 201)]
     [InlineData("$.items['١']", "{\"items\":{\"١\":42}}", 201)]
     [InlineData("$.items[1]", "{\"items\":[0,42]}", 201)]
+    [InlineData("""$['\u0061\n']""", """{"a\n":42,"a":0}""", 201)]
+    [InlineData("""$['\u0061\n']""", """{"a\n":0,"a":42}""", 404)]
+    [InlineData("""$["\uD83D\uDE00\\"]""", """{"😀\\":42}""", 201)]
+    [InlineData("""$['\u0000\t']""", """{"\u0000\t":42}""", 201)]
+    [InlineData("""$.items[?@['\u0061\n'] == true].value""", """{"items":[{"a\n":true,"value":42}]}""", 201)]
+    [InlineData("""$.items[?@.name == '\u0061\n'].value""", """{"items":[{"name":"a\n","value":42}]}""", 201)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """
