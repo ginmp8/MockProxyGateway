@@ -51,6 +51,10 @@ Registering DI alone is inert, including in Production.
   (including host `Configure<GatewayOptions>` and `PostConfigure<GatewayOptions>`)
   is fixed at startup, even when equal to the original bound value. The built-in
   configuration-section binding alone does not count as an explicit C# assignment.
+  Two distinct explicit serialized-document assignments are conflicting source
+  definitions, including clearing a previously selected document. Repeating the
+  exact same explicit document is permitted; the implicit host binding still
+  has lower precedence.
   Explicit assignment to `null` is still a serialized source definition, not an
   omission; it is rejected with File, Inline, or another explicitly supplied
   provider. Omit the assignment entirely when choosing those sources.

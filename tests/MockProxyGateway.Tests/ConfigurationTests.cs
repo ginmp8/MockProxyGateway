@@ -728,6 +728,51 @@ public sealed class ConfigurationTests
     }
 
     [Theory]
+    [InlineData(false, "replace")]
+    [InlineData(true, "replace")]
+    [InlineData(false, "clear")]
+    [InlineData(true, "clear")]
+    [InlineData(false, "same")]
+    [InlineData(true, "same")]
+    public async Task ExplicitSerializedAssignmentsMustNotSelectConflictingDocuments(bool postConfigure, string operation)
+    {
+        const string original = """
+            {"schemaVersion":1,"destinations":{},"services":{"demo":{"default":{"mode":"mock","response":{"statusCode":200,"text":"original"}}}}}
+            """;
+        var alternative = original.Replace("original", "alternative", StringComparison.Ordinal);
+        var builder = TestHosting.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        // The implicit host document remains lower priority than an explicit
+        // assignment, even if the host document is itself valid and different.
+        builder.Configuration["MockProxyGateway:RuleSource"] = "Configuration";
+        builder.Configuration["MockProxyGateway:RulesJson"] = alternative;
+        builder.Services.AddMockProxyGateway(o => o.RulesJson = original);
+        Action<GatewayOptions> assign = o => o.RulesJson = operation switch
+        {
+            "replace" => alternative,
+            "clear" => null,
+            _ => original
+        };
+        if (postConfigure)
+            builder.Services.PostConfigure(assign);
+        else
+            builder.Services.Configure(assign);
+
+        await using var app = builder.Build();
+        if (operation != "same")
+        {
+            Assert.Throws<InvalidOperationException>(() => app.UseMockProxyGateway());
+            return;
+        }
+
+        app.UseMockProxyGateway();
+        var ct = TestContext.Current.CancellationToken;
+        await app.StartAsync(ct);
+        using var client = app.GetTestClient();
+        Assert.Equal("original", await client.GetStringAsync("/mock-proxy/demo/check", ct));
+    }
+
+    [Theory]
     [InlineData(false, false, false)]
     [InlineData(false, true, false)]
     [InlineData(true, false, false)]

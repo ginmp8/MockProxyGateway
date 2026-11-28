@@ -17,6 +17,7 @@ public sealed class GatewayOptions
     private string? _rulesJson;
     internal bool BindingRulesJson { get; set; }
     internal bool HasExplicitRulesJson { get; private set; }
+    internal bool HasConflictingSerializedRules { get; private set; }
 
     /// <summary>Complete serialized JSON for the Configuration source.</summary>
     public string? RulesJson
@@ -28,6 +29,11 @@ public sealed class GatewayOptions
             // nor overwrite a rule source explicitly assigned before registration.
             if (BindingRulesJson && HasExplicitRulesJson)
                 return;
+            // Treat two distinct explicit document assignments as competing
+            // rule definitions, not ordinary operational option precedence.
+            if (!BindingRulesJson && HasExplicitRulesJson &&
+                !string.Equals(_rulesJson, value, StringComparison.Ordinal))
+                HasConflictingSerializedRules = true;
             _rulesJson = value;
             HasExplicitRulesJson |= !BindingRulesJson;
         }
