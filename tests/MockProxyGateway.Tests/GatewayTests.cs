@@ -326,6 +326,10 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@.nested[?match(@.name, 'x')]) == count($.expected[0,1])]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?value($..expected) == value(@.nested[?match(@.name, 'x')].flag)]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count($.expected[?@]) == count(@.nested[?match(@.name, 'x')])]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?\\u00a0match(@.name, 'x')]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[\\u000b0]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$ \\u00a0 .name\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?length(@.name)\\u000c==1]\",\"operator\":\"exists\"}")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """
@@ -868,6 +872,11 @@ public sealed class GatewayTests
     [InlineData("$.items[?length(value($.labels[*])) == count(@.nested[?match(@, 'x')])].value", "{\"labels\":[\"a\",\"b\"],\"items\":[{\"nested\":[\"x\"],\"value\":42}]}", 404)]
     [InlineData("$.items[?value(@.nested[?@ == null && $.enabled]) != length($.missing)].value", "{\"enabled\":true,\"items\":[{\"nested\":[null],\"value\":42}]}", 201)]
     [InlineData("$.items[?value(@.nested[?@ == null && $.enabled]) == length($.missing)].value", "{\"enabled\":true,\"items\":[{\"nested\":[false],\"value\":42}]}", 201)]
+    [InlineData("$.value\u00a0", "{\"value\":0,\"value\\u00a0\":42}", 201)]
+    [InlineData("$.value\u00a0", "{\"value\":42,\"value\\u00a0\":0}", 404)]
+    [InlineData("$.items[?length(@.name\u00a0) == 1].value", "{\"items\":[{\"name\":\"wrong\",\"name\\u00a0\":\"x\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(@.name\u00a0) == 1].value", "{\"items\":[{\"name\":\"x\",\"name\\u00a0\":\"wrong\",\"value\":42}]}", 404)]
+    [InlineData("$.items[?length(@['name\u00a0']) == 1].value", "{\"items\":[{\"name\":\"wrong\",\"name\\u00a0\":\"x\",\"value\":42}]}", 201)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """
