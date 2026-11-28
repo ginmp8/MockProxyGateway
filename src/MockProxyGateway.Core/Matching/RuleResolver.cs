@@ -276,6 +276,11 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                 if (buffer.Length > options.MaxBodySizeBytes)
                     throw new RequestFailure(413, "body-size");
             }
+            // Buffering cannot recover bytes already consumed from a non-seekable
+            // host body. When framing supplies a length, reject incomplete (or
+            // inconsistent) representations before JSON parsing or action selection.
+            if (request.ContentLength is long declaredLength && buffer.Length != declaredLength)
+                throw new RequestFailure(400, "body-transport");
             _bodyByteLength = (int)buffer.Length;
             _body = JsonNode.Parse(buffer.ToArray(), documentOptions: new JsonDocumentOptions { MaxDepth = 64 });
             // Materialize once to validate duplicate keys, Unicode strings and

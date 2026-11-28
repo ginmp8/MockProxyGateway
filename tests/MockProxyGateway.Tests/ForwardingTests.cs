@@ -2626,7 +2626,8 @@ public sealed class ForwardingTests
              ]}}}
             """)!;
         rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
-        await using var gateway = await StartGatewayAsync(rules, upstream, realServer: true, beforeGateway: app =>
+        using var capture = new CaptureProvider();
+        await using var gateway = await StartGatewayAsync(rules, upstream, realServer: true, capture: capture, beforeGateway: app =>
         {
             app.Use(async (context, next) =>
             {
@@ -2647,6 +2648,7 @@ public sealed class ForwardingTests
         using var rejected = await client.SendAsync(truncated, ct);
         Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
         Assert.Empty(upstream.Requests);
+        await WaitForGatewayLogAsync(capture, "category=body-transport", "status=400", ct);
 
         using var ordinary = CreateRequest("POST", "/mock-proxy/a/check", valid);
         using var accepted = await client.SendAsync(ordinary, ct);
