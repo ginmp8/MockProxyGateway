@@ -671,6 +671,8 @@ public sealed class ForwardingTests
     [Theory]
     [InlineData("header", "X-Scenario\n", "X-Scenario")]
     [InlineData("cookie", "test=session", "test-session")]
+    [InlineData("body", " $.scenario", "$.scenario")]
+    [InlineData("body", "$.scenario ", "$.scenario")]
     public async Task InvalidSelectorReloadCannotReplaceActiveMockWithProxy(string source, string invalidKey, string validKey)
     {
         var ct = TestContext.Current.CancellationToken;
@@ -708,7 +710,9 @@ public sealed class ForwardingTests
 
         async Task CheckMockAsync()
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, "/mock-proxy/a/check");
+            using var request = new HttpRequestMessage(source == "body" ? HttpMethod.Post : HttpMethod.Get, "/mock-proxy/a/check");
+            if (source == "body")
+                request.Content = new StringContent("{\"scenario\":\"synthetic\"}", Encoding.UTF8, "application/json");
             request.Headers.TryAddWithoutValidation("X-Scenario", "synthetic");
             request.Headers.TryAddWithoutValidation("Cookie", "test-session=synthetic");
             using var response = await client.SendAsync(request, ct);

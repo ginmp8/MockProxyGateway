@@ -330,6 +330,12 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[\\u000b0]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$ \\u00a0 .name\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?length(@.name)\\u000c==1]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\" $.value\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.value \",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"\\t$.value\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.value\\n\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"@.value\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$ \",\"operator\":\"exists\"}")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """
@@ -877,6 +883,9 @@ public sealed class GatewayTests
     [InlineData("$.items[?length(@.name\u00a0) == 1].value", "{\"items\":[{\"name\":\"wrong\",\"name\\u00a0\":\"x\",\"value\":42}]}", 201)]
     [InlineData("$.items[?length(@.name\u00a0) == 1].value", "{\"items\":[{\"name\":\"x\",\"name\\u00a0\":\"wrong\",\"value\":42}]}", 404)]
     [InlineData("$.items[?length(@['name\u00a0']) == 1].value", "{\"items\":[{\"name\":\"wrong\",\"name\\u00a0\":\"x\",\"value\":42}]}", 201)]
+    [InlineData("$ \t.value", "{\"value\":42}", 201)]
+    [InlineData("$ \n['value']", "{\"value\":42}", 201)]
+    [InlineData("$.items[?@.value == 42 ].value", "{\"items\":[{\"value\":42}]}", 201)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """
