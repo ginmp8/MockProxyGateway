@@ -2612,6 +2612,51 @@ public sealed class ForwardingTests
             Assert.Equal(Encoding.UTF8.GetBytes(payload), Assert.Single(upstream.Requests).BodyBytes);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ConsumedUnbufferedBodyCannotSelectAnActionFromAValidSuffix(bool matches)
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"inspect","priority":1,"conditions":{"source":"body","key":"$.number","operator":"equals","value":42},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        await using var gateway = await StartGatewayAsync(rules, upstream, realServer: true, beforeGateway: app =>
+        {
+            app.Use(async (context, next) =>
+            {
+                if (context.Request.Headers.ContainsKey("X-Consume-Prefix"))
+                {
+                    Assert.False(context.Request.Body.CanSeek);
+                    var prefix = new byte[1];
+                    await context.Request.Body.ReadExactlyAsync(prefix, context.RequestAborted);
+                }
+                await next(context);
+            });
+        });
+        using var client = new HttpClient { BaseAddress = new Uri(gateway.Urls.Single()) };
+        var ct = TestContext.Current.CancellationToken;
+        var valid = matches ? "{\"number\":42}" : "{\"number\":41}";
+        using var truncated = CreateRequest("POST", "/mock-proxy/a/check", "x" + valid);
+        truncated.Headers.Add("X-Consume-Prefix", "true");
+        using var rejected = await client.SendAsync(truncated, ct);
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        Assert.Empty(upstream.Requests);
+
+        using var ordinary = CreateRequest("POST", "/mock-proxy/a/check", valid);
+        using var accepted = await client.SendAsync(ordinary, ct);
+        Assert.Equal(matches ? HttpStatusCode.Accepted : HttpStatusCode.Created, accepted.StatusCode);
+        if (matches)
+            Assert.Empty(upstream.Requests);
+        else
+            Assert.Equal(Encoding.UTF8.GetBytes(valid), Assert.Single(upstream.Requests).BodyBytes);
+    }
+
     private static HttpRequestMessage CreateRequest(string method, string url, string? body, string? scenario = null)
     {
         var request = new HttpRequestMessage(new HttpMethod(method), url);
