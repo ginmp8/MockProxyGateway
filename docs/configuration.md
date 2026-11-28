@@ -63,6 +63,10 @@ Registering DI alone is inert, including in Production.
   The caller may supply the latest complete immutable document from its own provider.
   The callback must be thread-safe, fast and host-owned. Exceptions reject a candidate
   and retain the last good snapshot; no request data may select a provider or file.
+  Select a single explicit provider. A subsequent distinct provider assignment
+  (including host Configure/PostConfigure) cannot replace or clear an already
+  selected typed or supplied IConfiguration source; enabled activation rejects
+  the conflict rather than choosing by registration order.
 
 Every source compiles through the same validator. Serialized documents must be
 valid Unicode and fit the 4 MiB UTF-8 document limit before parsing, including

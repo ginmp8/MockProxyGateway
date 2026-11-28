@@ -55,6 +55,8 @@ internal sealed partial class RuleStore : IAsyncDisposable
 
     private byte[] ReadDocument()
     {
+        if (_options.HasConflictingProgrammaticRules)
+            throw new InvalidOperationException("Conflicting explicit rule sources.");
         byte[] bytes;
         if (_options.ProgrammaticRules is not null)
         {

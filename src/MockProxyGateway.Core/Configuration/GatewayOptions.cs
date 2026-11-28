@@ -32,8 +32,22 @@ public sealed class GatewayOptions
             HasExplicitRulesJson |= !BindingRulesJson;
         }
     }
+    private Func<JsonElement>? _programmaticRules;
+    internal bool HasConflictingProgrammaticRules { get; private set; }
+
     /// <summary>Explicit typed programmatic provider, overriding configured source selection.</summary>
-    public Func<JsonElement>? ProgrammaticRules { get; set; }
+    public Func<JsonElement>? ProgrammaticRules
+    {
+        get => _programmaticRules;
+        set
+        {
+            // A later explicit provider must not silently replace or clear an
+            // already selected provider (including a supplied IConfiguration).
+            HasConflictingProgrammaticRules |= _programmaticRules is not null &&
+                !_programmaticRules.Equals(value);
+            _programmaticRules = value;
+        }
+    }
     /// <summary>Check the selected document for updates.</summary>
     public bool ReloadOnChange { get; set; } = true;
     /// <summary>Maximum inspected JSON body bytes.</summary>

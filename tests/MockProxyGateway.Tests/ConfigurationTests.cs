@@ -728,6 +728,44 @@ public sealed class ConfigurationTests
     }
 
     [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(true, true, true)]
+    public async Task LaterExplicitProviderCannotReplaceOrClearSelectedSource(bool externalFirst, bool postConfigure, bool clear)
+    {
+        var builder = TestHosting.CreateBuilder();
+        if (externalFirst)
+        {
+            var external = new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?> { ["RulesJson"] = Rules }).Build();
+            builder.Services.AddMockProxyGateway(external);
+        }
+        else
+            builder.Services.AddMockProxyGateway(o => o.ProgrammaticRules = () => JsonElement.Parse(Rules));
+
+        var replacementRead = false;
+        Action<GatewayOptions> replace = options =>
+        {
+            options.ProgrammaticRules = clear ? null : () =>
+            {
+                replacementRead = true;
+                return JsonElement.Parse(Rules);
+            };
+        };
+        if (postConfigure)
+            builder.Services.PostConfigure(replace);
+        else
+            builder.Services.Configure(replace);
+
+        await using var app = builder.Build();
+        Assert.Throws<InvalidOperationException>(() => app.UseMockProxyGateway());
+        Assert.False(replacementRead);
+    }
+
+    [Theory]
     [InlineData("2030-01-01T00:00:00Z")]
     [InlineData("2030-01-01T00:00:00+00:00")]
     [InlineData("2030-01-01T00:00:00.0000000Z")]
