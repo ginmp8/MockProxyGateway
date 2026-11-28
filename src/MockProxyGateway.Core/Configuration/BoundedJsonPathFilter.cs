@@ -25,7 +25,7 @@ internal static class BoundedJsonPathFilter
             if (current is '\'' or '"')
             {
                 ReadQuoted(path, ref index);
-                normalized.Append(path.AsSpan(start, index - start));
+                AppendQuotedEscapes(normalized, path.AsSpan(start, index - start));
                 continue;
             }
 
@@ -65,6 +65,65 @@ internal static class BoundedJsonPathFilter
             index++;
         }
         return normalized.ToString();
+    }
+
+    // The pinned name parser consumes the next backslash while reading a
+    // Unicode escape run. Keep adjacent legal short escapes in that same run
+    // using their equivalent UTF-16 code units, without changing the value.
+    private static void AppendQuotedEscapes(StringBuilder target, ReadOnlySpan<char> token)
+    {
+        var quote = token[0];
+        target.Append(quote);
+        var afterHex = false;
+        for (var i = 1; i < token.Length - 1;)
+        {
+            if (token[i] != '\\')
+            {
+                target.Append(token[i++]);
+                afterHex = false;
+                continue;
+            }
+
+            var start = i++;
+            var escaped = token[i++];
+            if (escaped == 'u')
+            {
+                if (i + 4 > token.Length - 1 ||
+                    !char.IsAsciiHexDigit(token[i]) || !char.IsAsciiHexDigit(token[i + 1]) ||
+                    !char.IsAsciiHexDigit(token[i + 2]) || !char.IsAsciiHexDigit(token[i + 3]))
+                    throw Invalid();
+                i += 4;
+                target.Append(token[start..i]);
+                afterHex = true;
+                continue;
+            }
+
+            if (afterHex)
+            {
+                var replacement = escaped switch
+                {
+                    'b' => "\\u0008",
+                    't' => "\\u0009",
+                    'n' => "\\u000A",
+                    'f' => "\\u000C",
+                    'r' => "\\u000D",
+                    '/' => "\\u002F",
+                    '\\' => "\\u005C",
+                    '"' when quote == '"' => "\\u0022",
+                    '\'' when quote == '\'' => "\\u0027",
+                    _ => null
+                };
+                if (replacement is not null)
+                {
+                    target.Append(replacement);
+                    continue;
+                }
+            }
+
+            target.Append(token[start..i]);
+            afterHex = false;
+        }
+        target.Append(quote);
     }
 
     private static bool IsNameFirst(char c) => char.IsAsciiLetter(c) || c == '_' || c >= '\u0080';
