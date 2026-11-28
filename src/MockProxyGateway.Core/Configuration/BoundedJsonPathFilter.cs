@@ -770,7 +770,7 @@ internal static class BoundedJsonPathFilter
     }
 
     // Explicit conversion from a nodelist to ValueType. Admit bounded
-    // unions with their multiplicity, but no recursive or filtered queries.
+    // unions and a single recursive descent, but no filtered queries.
     // Precharge repeated whole-input work before any action.
     private static JsonPath ReadValueQuery(string path, ref int index, ref bool usesRepeatedTraversal, ref int privateValueUnionProduct)
     {
@@ -786,16 +786,16 @@ internal static class BoundedJsonPathFilter
         var repeatedDescent = false;
         _ = ReadSegments(path, ref index, [], ref repeated, ref unionProduct,
             ref nested, ref repeatedDescent, 0);
-        if (repeated || nested ||
+        if (repeatedDescent || nested ||
             !JsonPath.TryParse(path[start..index].Trim(), out var query,
                 new PathParsingOptions { AllowRelativePathStart = true }) ||
             query.Segments.Length > 16)
             throw Invalid();
         Require(path, ref index, ")");
-        // A relative conversion needs the conservative work charge, but
-        // does not escape the nested candidate's scope like a root query.
+        // Root and recursive queries require repeated traversal accounting.
+        // Nested filter combinations remain subject to the global admission guard.
         // Preserve the largest private operand union product across all leaves.
-        usesRepeatedTraversal |= root;
+        usesRepeatedTraversal |= root || repeated;
         privateValueUnionProduct = Math.Max(privateValueUnionProduct, unionProduct);
         return query;
     }

@@ -357,6 +357,8 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?!!@.flag]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?!!match(@.name, 'x')]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?!@.value != 42]]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?length(value(@..nested..name)) == 2]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(value($..nested..label), 'x')]\",\"operator\":\"exists\"}")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """
@@ -939,6 +941,13 @@ public sealed class GatewayTests
     [InlineData("$.items[?match(value(@.names[0,1]), 'ab')].value", "{\"items\":[{\"names\":[\"ab\"],\"value\":42}]}", 201)]
     [InlineData("$.items[?search(value(@.names[0,0]), 'b')].value", "{\"items\":[{\"names\":[\"ab\"],\"value\":42}]}", 404)]
     [InlineData("$.items[?length(value(@['a','b'][0,1])) == 2].value", "{\"items\":[{\"a\":[\"ab\"],\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(value(@..name)) == 2].value", "{\"items\":[{\"nested\":{\"name\":\"ab\"},\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(value(@..name)) == 2].value", "{\"items\":[{\"name\":\"ab\",\"nested\":{\"name\":\"cd\"},\"value\":42}]}", 404)]
+    [InlineData("$.items[?length(value($..label)) == 1].value", "{\"root\":{\"label\":\"😀\"},\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(@.name) == count(@..tag)].value", "{\"items\":[{\"name\":\"ab\",\"tag\":0,\"nested\":{\"tag\":1},\"value\":42}]}", 201)]
+    [InlineData("$.items[?match(value(@..name), 'ab')].value", "{\"items\":[{\"nested\":{\"name\":\"ab\"},\"value\":42}]}", 201)]
+    [InlineData("$.items[?search(value(@..name), 'b')].value", "{\"items\":[{\"name\":\"ab\",\"nested\":{\"name\":\"ab\"},\"value\":42}]}", 404)]
+    [InlineData("$.items[?length(value(@..name)) == @.missing].value", "{\"items\":[{\"value\":42}]}", 201)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """
