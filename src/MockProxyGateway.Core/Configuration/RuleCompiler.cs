@@ -187,7 +187,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
         var hasFilter = false;
         var hasRepeatedTraversal = false;
         var hasCubicTraversal = false;
-        var hasRootDrivenNestedFilter = false;
+        var hasRepeatedRegexVisits = false;
         var regexCandidateMultiplier = 0;
         if (source == "body")
         {
@@ -230,7 +230,8 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             if (hasFilter)
             {
                 var normalized = BoundedJsonPathFilter.Normalize(selectorText, out var predicateRepeatedTraversal,
-                    out var predicateUnionProduct, out var hasNestedFilter, out var hasRepeatedPredicateDescent, out var usesPrivateValueQuery, out hasRootDrivenNestedFilter, out var localFilters);
+                    out var predicateUnionProduct, out var hasNestedFilter, out var hasRepeatedPredicateDescent, out var usesPrivateValueQuery, out var hasRootDrivenNestedFilter, out var localFilters);
+                hasRepeatedRegexVisits = hasRootDrivenNestedFilter || recursiveCount == 2;
                 // Two outer descents can repeat filter candidates; two
                 // predicate descents can repeat traversal per candidate.
                 // Either requires a cubic whole-input bound. Combining both
@@ -253,9 +254,10 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 var regexFilters = localFilters.Values.OfType<BoundedCompoundFilterSelector>().Sum(x => x.RegexCount);
                 if (regexFilters != 0)
                 {
-                    if (recursive)
-                        throw Invalid("JSONPath regex filters cannot be combined with outer descent.");
-                    // Reserve candidate visits before invoking any regex.
+                    // One outer descent visits disjoint subtrees (apart from
+                    // selector-union multiplicity). Two descents can revisit
+                    // overlapping subtrees, so the resolver precharges a second
+                    // body-node factor before invoking any regex.
                     regexCandidateMultiplier = regexFilters * pathMultiplier;
                 }
                 if (!JsonPath.TryParse(normalized, out jsonPath))
@@ -285,7 +287,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 pathMultiplier *= 2 + recursiveSuffix;
         }
         return new Condition("leaf", [], source, key, op, hasValue ? operand.Clone() : default,
-            quantifier, ignoreCase, regex, jsonPath, hasValue ? 1 + operand.GetRawText().Length / 64 : 0, pathMultiplier, hasFilter, hasRepeatedTraversal, hasCubicTraversal, regexCandidateMultiplier, hasRootDrivenNestedFilter);
+            quantifier, ignoreCase, regex, jsonPath, hasValue ? 1 + operand.GetRawText().Length / 64 : 0, pathMultiplier, hasFilter, hasRepeatedTraversal, hasCubicTraversal, regexCandidateMultiplier, hasRepeatedRegexVisits);
     }
 
     internal static decimal Number(JsonElement value)

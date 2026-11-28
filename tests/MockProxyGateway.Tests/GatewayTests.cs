@@ -265,7 +265,6 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(@.name, 'x)')]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(@.name, 'x*?')]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(@.name, '(((((((((x)))))))))')]\",\"operator\":\"exists\"}")]
-    [InlineData("{\"source\":\"body\",\"key\":\"$..items[?match(@.name, 'x')]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[0,1,2,3,?@.nested[?@.active]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[0,?@.nested[?@.active]][0,1,2]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?@.active],?@.other[?@.value]]\",\"operator\":\"exists\"}")]

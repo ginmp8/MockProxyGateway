@@ -160,9 +160,12 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                         _filterNumbersValidated = true;
                     }
                 }
-                // Reserve repeated inner regex visits for root-driven nested filters.
+                // Two outer descents can revisit a candidate through multiple
+                // ancestors. Root-driven nested filters can likewise revisit an
+                // inner candidate per outer candidate. Reserve the quadratic
+                // upper bound (including union multiplicity) before evaluation.
                 var regexCandidates = (long)_bodyNodes * condition.JsonPathRegexCandidateMultiplier *
-                    (condition.HasJsonPathRootDrivenNestedFilter ? _bodyNodes : 1);
+                    (condition.HasJsonPathRepeatedRegexVisits ? _bodyNodes : 1);
                 if (regexCandidates > _regexRemaining)
                     throw new RequestFailure(400, "regex-budget");
                 _regexRemaining -= (int)regexCandidates;

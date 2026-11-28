@@ -1931,6 +1931,15 @@ public sealed class ForwardingTests
     }
 
     [Theory]
+    [InlineData("$..items[?match(@.name, '..')]", false, 202, 0)]
+    [InlineData("$..items[?search(@.name, 'z')]", false, 201, 1)]
+    [InlineData("$..items[?match(@.name, '..')]", true, 400, 0)]
+    [InlineData("$.items[?match(@.name, '..')]..name", false, 202, 0)]
+    [InlineData("$..[?match(@.name, '..')]", false, 202, 0)]
+    [InlineData("$..[?search(@.name, 'z')]", false, 201, 1)]
+    [InlineData("$..items..[?match(@.name, '..')]", false, 202, 0)]
+    [InlineData("$..items..[?search(@.name, 'z')]", false, 201, 1)]
+    [InlineData("$..items..[?match(@.name, '..')]", true, 400, 0)]
     [InlineData("$.items[?match(@.name, '..')]", false, 202, 0)]
     [InlineData("$.items[?search(@.name, 'z')]", false, 201, 1)]
     [InlineData("$.items[?match(@.name, '..')]", true, 400, 0)]
@@ -1994,6 +2003,32 @@ public sealed class ForwardingTests
         Assert.Same(originalFunction, currentFunction);
         Assert.True(Json.Path.FunctionRepository.TryGet("search", out var currentSearch));
         Assert.Same(originalSearch, currentSearch);
+    }
+
+    [Fact]
+    public async Task RepeatedDescentRegexVisitsAreChargedBeforeAnyOutboundCall()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var upstream = await Upstream.StartAsync();
+        using var capture = new CaptureProvider();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"match","priority":1,"conditions":{"source":"body","key":"$..items..[?match(@.name, 'x') || search(@.name, 'z') || match(@.name, 'q')]","operator":"exists"},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        await using var gateway = await StartGatewayAsync(rules, upstream, capture: capture);
+        using var client = gateway.GetTestClient();
+        // Five JSON nodes, three regex leaves, two descents. The conservative
+        // 5 * 5 * 3 reservation exceeds 64 even though the work charge fits.
+        const string payload = """{"label":"a","items":[{"name":"b"}]}""";
+        using var body = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync("/mock-proxy/a/check", body, ct);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty(upstream.Requests);
+        await WaitForGatewayLogAsync(capture, "status=400", "category=regex-budget", ct);
     }
 
     [Theory]
