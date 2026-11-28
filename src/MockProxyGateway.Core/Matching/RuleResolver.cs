@@ -260,6 +260,10 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
         var chunk = new byte[8192];
         try
         {
+            // A preceding host middleware may already have enabled buffering and
+            // read a prefix. Inspect exactly the bytes that will be rewound for
+            // forwarding, never a suffix that could hide malformed JSON or a rule.
+            request.Body.Position = 0;
             while (true)
             {
                 var remaining = options.MaxBodySizeBytes + 1 - (int)buffer.Length;

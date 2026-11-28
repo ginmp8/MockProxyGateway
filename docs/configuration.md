@@ -226,7 +226,7 @@ Body inspection always admits `application/json`; other structured-suffix JSON m
 Body selector caching is bounded to twice the inspected
 body byte limit. Inspection is lazy; malformed JSON (including duplicate object
 names, invalid UTF-8 and unpaired Unicode surrogate escapes) returns 400,
-oversized bodies 413, unsupported media type 415; HTTP client errors raised by the host while reading a required body retain their sanitized status (including a stricter host body limit). Errors never select the proxy
+oversized bodies 413, unsupported media type 415; HTTP client errors raised by the host while reading a required body retain their sanitized status (including a stricter host body limit). Required inspection starts at the beginning of the buffered request body even if a preceding host middleware left a seekable stream partially read; forwarding uses those same bytes. Host middleware that consumes a non-seekable body must buffer it first and make it available to downstream middleware. Uninspected requests retain streaming behavior. Errors never select the proxy
 fallback. Bodies not requiring inspection are not decoded by the gateway.
 
 Configuration document size 4 MiB; mock body size 4 MiB each and 16 MiB aggregate
