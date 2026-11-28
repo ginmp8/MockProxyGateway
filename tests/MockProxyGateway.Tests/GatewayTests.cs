@@ -341,6 +341,9 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[١:2]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[:٢]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[::٢]\",\"operator\":\"exists\"}")]
+    [InlineData("""{"source":"body","key":"$.items[?@.name == '\\uD800']","operator":"exists"}""")]
+    [InlineData("""{"source":"body","key":"$.items[?@.name != \"\\uDC00\"]","operator":"exists"}""")]
+    [InlineData("""{"source":"body","key":"$.items[?@.name == '\\uD800\\u0061']","operator":"exists"}""")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """

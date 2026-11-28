@@ -674,6 +674,7 @@ public sealed class ForwardingTests
     [InlineData("body", " $.scenario", "$.scenario")]
     [InlineData("body", "$.scenario ", "$.scenario")]
     [InlineData("body", "$.items[١]", "$.scenario")]
+    [InlineData("body", """$.items[?@.name == '\uD800']""", "$.scenario")]
     public async Task InvalidSelectorReloadCannotReplaceActiveMockWithProxy(string source, string invalidKey, string validKey)
     {
         var ct = TestContext.Current.CancellationToken;
