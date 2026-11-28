@@ -24,6 +24,11 @@ public sealed class ForwardingTests
 {
     private const string Body = """{"customer":{"riskScore":10,"document":"TEST-OTHER","type":"Individual"}}""";
     private static readonly string[] MultipleHeaderValues = ["first", "second"];
+    private static readonly string[] UpstreamCookies =
+    [
+        "synthetic-session=first; Path=/; HttpOnly",
+        "synthetic-preference=second; Expires=Wed, 01 Jan 2031 00:00:00 GMT; Path=/"
+    ];
 
     [Fact]
     public async Task PinnedExampleSelectsMockOrRealActionWithCorrectOutboundCount()
@@ -40,22 +45,22 @@ public sealed class ForwardingTests
 
         // All inputs are synthetic. Each assertion checks actual outgoing call counts.
         await CheckAsync("POST", "/compliance/analysis", 201, expectedUpstream: "/compliance-real/analysis", body: Body);
-        await CheckAsync("POST", "/compliance/analysis", 200, "success", expectedBody: "Approved");
-        await CheckAsync("POST", "/compliance/analysis", 422, body: """{"customer":{"riskScore":80}}""", expectedBody: "Rejected");
-        await CheckAsync("POST", "/compliance/analysis?simulate=unavailable", 503, expectedBody: "Service unavailable");
-        await CheckAsync("POST", "/compliance/analysis", 429, "rate-limited", expectedBody: "Too many requests", retryAfter: "30");
-        await CheckAsync("POST", "/compliance/analysis", 401, "unauthorized", expectedBody: "Unauthorized");
-        await CheckAsync("POST", "/compliance/analysis", 202, body: """{"customer":{"document":"TEST-1001"}}""", expectedBody: "Pending");
+        await CheckAsync("POST", "/compliance/analysis", 200, "success", expectedBody: """{"status":"Approved","riskLevel":"Low"}""");
+        await CheckAsync("POST", "/compliance/analysis", 422, body: """{"customer":{"riskScore":80}}""", expectedBody: """{"status":"Rejected","reason":"Risk threshold"}""");
+        await CheckAsync("POST", "/compliance/analysis?simulate=unavailable", 503, expectedBody: """{"error":"Service unavailable"}""");
+        await CheckAsync("POST", "/compliance/analysis", 429, "rate-limited", expectedBody: """{"error":"Too many requests"}""", retryAfter: "30");
+        await CheckAsync("POST", "/compliance/analysis", 401, "unauthorized", expectedBody: """{"error":"Unauthorized"}""");
+        await CheckAsync("POST", "/compliance/analysis", 202, body: """{"customer":{"document":"TEST-1001"}}""", expectedBody: """{"status":"Pending","analysisId":"analysis-test-1001"}""");
         await CheckAsync("POST", "/compliance/analysis", 201, "alternate", expectedUpstream: "/compliance-v2/v2/analysis");
         await CheckAsync("POST", "/compliance/analysis?simulate=unavailable", 201, "real", expectedUpstream: "/compliance-real/analysis?simulate=unavailable");
-        await CheckAsync("POST", "/compliance/analysis?simulate=success", 200, session: "session-a", expectedBody: "composite");
-        await CheckAsync("POST", "/compliance/analysis", 200, body: """{"products":[{"type":"TestProduct"}]}""", expectedBody: "array");
-        await CheckAsync("POST", "/compliance/analysis", 200, cookie: "test-session=session-b", expectedBody: "cookie");
-        await CheckAsync("POST", "/compliance/analysis?simulate=unavailable", 503, "success", expectedBody: "Service unavailable");
+        await CheckAsync("POST", "/compliance/analysis?simulate=success", 200, session: "session-a", expectedBody: """{"status":"Approved","scenario":"composite"}""");
+        await CheckAsync("POST", "/compliance/analysis", 200, body: """{"products":[{"type":"TestProduct"}]}""", expectedBody: """{"status":"Approved","scenario":"array"}""");
+        await CheckAsync("POST", "/compliance/analysis", 200, cookie: "test-session=session-b", expectedBody: """{"status":"Approved","scenario":"cookie"}""");
+        await CheckAsync("POST", "/compliance/analysis?simulate=unavailable", 503, "success", expectedBody: """{"error":"Service unavailable"}""");
         await CheckAsync("POST", "/compliance/analysis", 201, "disabled", expectedUpstream: "/compliance-real/analysis");
         await CheckAsync("POST", "/compliance/analysis", 201, "expired", expectedUpstream: "/compliance-real/analysis");
-        await CheckAsync("GET", "/compliance/analysis/analysis-test-1001", 200, expectedBody: "Pending");
-        await CheckAsync("GET", "/compliance/health", 200, expectedBody: "Healthy");
+        await CheckAsync("GET", "/compliance/analysis/analysis-test-1001", 200, expectedBody: """{"status":"Pending"}""");
+        await CheckAsync("GET", "/compliance/health", 200, expectedBody: """{"status":"Healthy"}""");
         await CheckAsync("GET", "/compliance/legacy/a/b", 201, expectedUpstream: "/compliance-v2/legacy/a/b");
         await CheckAsync("GET", "/compliance/other", 201, expectedUpstream: "/compliance-real/other");
         await CheckAsync("GET", "/documents/anything", 201, expectedUpstream: "/documents-real/anything");
@@ -96,8 +101,11 @@ public sealed class ForwardingTests
             Assert.Equal((HttpStatusCode)status, response.StatusCode);
             if (expectedBody is not null)
             {
-                Assert.Contains(expectedBody, await response.Content.ReadAsStringAsync(ct), StringComparison.Ordinal);
+                var actualBody = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
+                Assert.True(JsonNode.DeepEquals(JsonNode.Parse(expectedBody), actualBody),
+                    $"Expected complete mock JSON {expectedBody}, received {actualBody}.");
                 Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+                Assert.False(response.Headers.Contains("X-Upstream"));
             }
             if (retryAfter is not null)
                 Assert.Equal(retryAfter, response.Headers.GetValues("Retry-After").Single());
@@ -121,8 +129,8 @@ public sealed class ForwardingTests
     [InlineData("alternate", "/alternate/resource?business=keep", true)]
     public async Task AllEndToEndHeadersReachSelectedUpstreamWithoutConfiguration(string scenario, string expectedTarget, bool inspect)
     {
-        await using var upstream = await Upstream.StartAsync();
-        await using var alternate = await Upstream.StartAsync();
+        await using var upstream = await Upstream.StartAsync(includeRepeatedResponseHeaders: true);
+        await using var alternate = await Upstream.StartAsync(includeRepeatedResponseHeaders: true);
         var json = JsonNode.Parse("""
             {"schemaVersion":1,"destinations":{"primary":{"baseUrl":"http://127.0.0.1/"},
               "alternate":{"baseUrl":"http://127.0.0.1/","removeQuery":["simulate"]}},
@@ -185,6 +193,10 @@ public sealed class ForwardingTests
             Assert.Equal(header.Value, actual.Headers[header.Key]);
         Assert.Equal(scenario, actual.Scenario);
         Assert.Equal(MultipleHeaderValues, actual.MultipleValues);
+        // Set-Cookie cannot be comma-folded: Expires itself contains a comma.
+        // Assert complete response values for both actual selected authorities.
+        Assert.Equal(UpstreamCookies, response.Headers.GetValues("Set-Cookie").ToArray());
+        Assert.Equal(MultipleHeaderValues, response.Headers.GetValues("X-Upstream-Multiple").ToArray());
         Assert.False(actual.Headers.ContainsKey("Proxy-Authorization"));
         Assert.False(actual.Headers.ContainsKey("Connection"));
         Assert.Equal(new Uri(selected.BaseUrl).Authority, actual.Host);
@@ -193,6 +205,8 @@ public sealed class ForwardingTests
         Assert.True(mock.Headers.TryAddWithoutValidation("Authorization", "Bearer synthetic-token"));
         using var mockResponse = await client.SendAsync(mock, ct);
         Assert.Equal(HttpStatusCode.OK, mockResponse.StatusCode);
+        Assert.False(mockResponse.Headers.Contains("Set-Cookie"));
+        Assert.False(mockResponse.Headers.Contains("X-Upstream-Multiple"));
         Assert.Single(selected.Requests);
         Assert.Empty(unselected.Requests);
 
@@ -533,7 +547,10 @@ public sealed class ForwardingTests
             request.Headers.TryAddWithoutValidation("X-Test-Session", "session-" + index);
             using var response = await client.SendAsync(request, ct);
             Assert.Equal(isRejected ? HttpStatusCode.UnprocessableEntity : HttpStatusCode.OK, response.StatusCode);
-            Assert.Contains(isRejected ? "Rejected" : "Approved", await response.Content.ReadAsStringAsync(ct), StringComparison.Ordinal);
+            var expected = isRejected ? """{"status":"Rejected","reason":"Risk threshold"}""" :
+                """{"status":"Approved","riskLevel":"Low"}""";
+            Assert.True(JsonNode.DeepEquals(JsonNode.Parse(expected),
+                JsonNode.Parse(await response.Content.ReadAsStringAsync(ct))));
             Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
         });
         await Task.WhenAll(independent);
@@ -548,7 +565,8 @@ public sealed class ForwardingTests
         {
             Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
             Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
-            Assert.Contains("Service unavailable", await response.Content.ReadAsStringAsync(ct), StringComparison.Ordinal);
+            Assert.True(JsonNode.DeepEquals(JsonNode.Parse("""{"error":"Service unavailable"}"""),
+                JsonNode.Parse(await response.Content.ReadAsStringAsync(ct))));
         }
         Assert.Equal(count, upstream.Requests.Count);
 
@@ -2835,7 +2853,7 @@ public sealed class ForwardingTests
         internal string BaseUrl => app.Urls.Single().TrimEnd('/') + "/";
         internal ConcurrentQueue<Captured> Requests => requests;
 
-        internal static async Task<Upstream> StartAsync(Func<HttpContext, Task>? handler = null)
+        internal static async Task<Upstream> StartAsync(Func<HttpContext, Task>? handler = null, bool includeRepeatedResponseHeaders = false)
         {
             var requests = new ConcurrentQueue<Captured>();
             var builder = TestHosting.CreateBuilder();
@@ -2869,6 +2887,11 @@ public sealed class ForwardingTests
                 }
                 context.Response.StatusCode = 201;
                 context.Response.Headers["X-Upstream"] = "from-upstream";
+                if (includeRepeatedResponseHeaders)
+                {
+                    context.Response.Headers["Set-Cookie"] = UpstreamCookies;
+                    context.Response.Headers["X-Upstream-Multiple"] = MultipleHeaderValues;
+                }
                 await context.Response.WriteAsync("upstream", context.RequestAborted);
             });
             try
