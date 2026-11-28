@@ -336,6 +336,11 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.value\\n\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"@.value\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$ \",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[١]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[1١]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[١:2]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[:٢]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[::٢]\",\"operator\":\"exists\"}")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """
@@ -886,6 +891,9 @@ public sealed class GatewayTests
     [InlineData("$ \t.value", "{\"value\":42}", 201)]
     [InlineData("$ \n['value']", "{\"value\":42}", 201)]
     [InlineData("$.items[?@.value == 42 ].value", "{\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.١", "{\"١\":42}", 201)]
+    [InlineData("$.items['١']", "{\"items\":{\"١\":42}}", 201)]
+    [InlineData("$.items[1]", "{\"items\":[0,42]}", 201)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """
