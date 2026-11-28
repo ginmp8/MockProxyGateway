@@ -970,6 +970,87 @@ public sealed class ForwardingTests
         }
     }
 
+
+    [Fact]
+    public async Task ConfigMapStyleDataLinkReplacementRetainsLastGoodAndActivatesNewRules()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var directory = Directory.CreateTempSubdirectory("mock-proxy-mounted-rules-").FullName;
+        try
+        {
+            await using var upstream = await Upstream.StartAsync();
+            var rules = JsonNode.Parse("""
+                {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+                 "services":{"a":{"default":{"mode":"mock","response":{"statusCode":200,"text":"old"}}}}}
+                """)!;
+            rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+            var data = Path.Combine(directory, "..data");
+            var visible = Path.Combine(directory, "mock-proxy-gateway.json");
+            await PublishAsync("generation-1", rules.ToJsonString(), initial: true);
+            // The visible file link remains unchanged; replace only the data-directory
+            // link, as a projected ConfigMap volume does.
+            File.CreateSymbolicLink(visible, Path.Combine("..data", "rules.json"));
+
+            using var capture = new CaptureProvider();
+            var builder = TestHosting.CreateBuilder();
+            builder.WebHost.UseTestServer();
+            builder.Logging.AddProvider(capture);
+            builder.Logging.SetMinimumLevel(LogLevel.Information);
+            builder.Services.AddMockProxyGateway(options =>
+            {
+                options.ConfigurationFile = visible;
+                options.AllowLoopbackForTests = true;
+                options.AllowedDestinationAuthorities = [new Uri(upstream.BaseUrl).Authority];
+            });
+            await using var gateway = builder.Build();
+            gateway.UseMockProxyGateway();
+            await gateway.StartAsync(ct);
+            using var client = gateway.GetTestClient();
+            await AssertOldAsync();
+
+            await PublishAsync("generation-2", "{invalid");
+            await WaitForGatewayLogAsync(capture, "Gateway configuration reload rejected; retaining version 1.", "", ct);
+            await AssertOldAsync();
+
+            rules["services"]!["a"]!["default"] = JsonNode.Parse("""{"mode":"proxy","destination":"real"}""");
+            await PublishAsync("generation-3", rules.ToJsonString());
+            await WaitForGatewayLogAsync(capture, "Gateway configuration version 2 activated.", "", ct);
+            using var forwarded = await client.GetAsync("/mock-proxy/a/check?case=mounted", ct);
+            Assert.Equal(HttpStatusCode.Created, forwarded.StatusCode);
+            Assert.Equal("upstream", await forwarded.Content.ReadAsStringAsync(ct));
+            Assert.Equal("from-upstream", Assert.Single(forwarded.Headers.GetValues("X-Upstream")));
+            var observed = Assert.Single(upstream.Requests);
+            Assert.Equal("GET", observed.Method);
+            Assert.Equal("/check?case=mounted", observed.Target);
+
+            async Task AssertOldAsync()
+            {
+                using var response = await client.GetAsync("/mock-proxy/a/check?case=mounted", ct);
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                Assert.Equal("old", await response.Content.ReadAsStringAsync(ct));
+                Assert.Empty(upstream.Requests);
+            }
+
+            async Task PublishAsync(string generation, string json, bool initial = false)
+            {
+                var next = Directory.CreateDirectory(Path.Combine(directory, generation));
+                await File.WriteAllTextAsync(Path.Combine(next.FullName, "rules.json"), json, ct);
+                if (initial)
+                    Directory.CreateSymbolicLink(data, generation);
+                else
+                {
+                    var temporary = data + ".next";
+                    Directory.CreateSymbolicLink(temporary, generation);
+                    File.Move(temporary, data, overwrite: true);
+                }
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static async Task WaitForGatewayLogAsync(CaptureProvider capture, string required, string additional, CancellationToken ct)
     {
         var deadline = DateTime.UtcNow.AddSeconds(10);

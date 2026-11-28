@@ -80,7 +80,7 @@ Invalid reload retains the prior snapshot; rejected unchanged semantic-validatio
 Use atomic replacement (write a new file then rename it into place), especially on
 mounted files. The runtime captures fixture bytes with the rule snapshot; edit the
 rule document to refresh an already active fixture. A temporarily unavailable fixture in a rejected candidate is retried without another rule edit. Kubernetes
-ConfigMap volume propagation is eventual; `subPath` mounts do not receive updates.
+ConfigMap volume propagation is eventual; `subPath` mounts do not receive updates. The dedicated-file reload integration test models a projected volume using an unchanged visible file symlink and replacement of the `..data` directory symlink. It checks invalid and valid generations, snapshot diagnostics, and actual local upstream call counts. It does not run Kubernetes or measure propagation latency.
 There is no cross-replica synchronization or administrative write endpoint.
 
 ## Rule document fields
