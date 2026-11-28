@@ -737,6 +737,10 @@ public sealed class ConfigurationTests
     public async Task LaterExplicitProviderCannotReplaceOrClearSelectedSource(bool externalFirst, bool postConfigure, bool clear)
     {
         var builder = TestHosting.CreateBuilder();
+        // Keep the configured fallback valid: a cleared explicit provider must
+        // fail because ownership conflicts, not because a fallback file is missing.
+        builder.Configuration["MockProxyGateway:RuleSource"] = "Configuration";
+        builder.Configuration["MockProxyGateway:RulesJson"] = Rules;
         if (externalFirst)
         {
             var external = new ConfigurationBuilder().AddInMemoryCollection(
