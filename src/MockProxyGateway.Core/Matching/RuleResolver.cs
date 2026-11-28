@@ -228,7 +228,8 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                     // Matching ignores parameters, but parsing them still costs work.
                     // Charge every inspected header before parsing, even on a no-match.
                     Charge(1L + request.ContentType.Length / 64L);
-                    if (!MediaTypeHeaderValue.TryParse(request.ContentType, out var type))
+                    if (!MediaTypeHeaderValue.TryParse(request.ContentType, out var type) ||
+                        type.MediaType.Value!.Contains('*'))
                         throw new RequestFailure(400, "content-type-syntax");
                     Charge(type.Parameters.Count);
                     strings = [type.MediaType.Value!];

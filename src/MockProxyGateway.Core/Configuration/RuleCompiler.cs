@@ -16,7 +16,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
     private static readonly HashSet<string> ForbiddenResponseHeaders = new(StringComparer.OrdinalIgnoreCase)
     {
         "Connection", "Transfer-Encoding", "Content-Length", "Keep-Alive", "Upgrade", "Trailer",
-        "Proxy-Authenticate", "Proxy-Authorization", "TE", "Host"
+        "Proxy-Authenticate", "Proxy-Authorization", "Proxy-Connection", "TE", "Host"
     };
 
     internal RuleSnapshot Compile(byte[] bytes, long version)
@@ -327,7 +327,8 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 if (!GatewayPaths.HttpToken().IsMatch(header.Name) || ForbiddenResponseHeaders.Contains(header.Name) ||
                     value.Any(c => c != '\t' && (c < ' ' || c > '~')) || value.Length > 8192 ||
                     (string.Equals(header.Name, "Content-Type", StringComparison.OrdinalIgnoreCase) &&
-                        !MediaTypeHeaderValue.TryParse(value, out _)))
+                        (!MediaTypeHeaderValue.TryParse(value, out var mediaType) ||
+                         mediaType.MediaType.Value!.Contains('*'))))
                     throw Invalid("Unsafe or invalid mock response header.");
                 headers.Add(header.Name, value);
             }

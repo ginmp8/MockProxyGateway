@@ -107,7 +107,9 @@ Cookie header with the framework parser, preserving case-distinct and repeated
 names; values are percent-decoded for matching only. Required cookie inspection rejects
 malformed cookie syntax with a sanitized 400 instead of treating it as a missing value.
 A required content-type selector likewise rejects a malformed present Content-Type with
-400; an absent header remains missing. Body inspection retains its own 415 contract.
+400; an absent header remains missing. Media ranges such as `*/*` and `application/*`
+are not concrete Content-Type values and are rejected by required content-type matching.
+Body inspection retains its own 415 contract.
 These checks are lazy rule evaluation, not a proxy header filter. Proxy headers are unchanged.
 Method and content type compare
 case-insensitively, including the regex operator; content-type parameters are excluded. Path matching uses the
@@ -233,7 +235,7 @@ Configuration document size 4 MiB; mock body size 4 MiB each and 16 MiB aggregat
 per compiled snapshot; service and destination counts at most 256 each; endpoints
 at most 1024 per service. Mock response status 200–599; delay 0–60000 ms;
 ASCII response header values (HTAB allowed, max 8192 characters), validated content
-type and no hop-by-hop/framing headers. No body for 204, 205, 304; HEAD suppresses
+type without media ranges and no hop-by-hop/framing headers (including `Proxy-Connection`). No body for 204, 205, 304; HEAD suppresses
 body transmission. Fixture paths are relative to a trusted operator-controlled
 root with no traversal, symbolic links or reparse points; do not permit untrusted
 writers. These are safety limits, not performance claims.
