@@ -24,8 +24,36 @@ settings["MockProxyGateway"].pop("Prefix", None)
 path.write_text(json.dumps(settings))
 PY
 dotnet add "$work/consumer/EmbeddedHost.csproj" package MockProxyGateway --version 0.1.0-preview.1 --no-restore
+# Only the freshly packed gateway may satisfy this package ID. Dependencies
+# continue to restore from NuGet.org in the isolated consumer cache.
+# https://learn.microsoft.com/en-us/nuget/consume-packages/package-source-mapping
+python3 - "$work/NuGet.Config" "$root/artifacts/packages" <<'PY'
+import sys
+from xml.etree import ElementTree as ET
+config = ET.Element("configuration")
+sources = ET.SubElement(config, "packageSources")
+ET.SubElement(sources, "clear")
+ET.SubElement(sources, "add", key="gateway-local", value=sys.argv[2])
+ET.SubElement(sources, "add", key="nuget.org", value="https://api.nuget.org/v3/index.json")
+mapping = ET.SubElement(config, "packageSourceMapping")
+ET.SubElement(ET.SubElement(mapping, "packageSource", key="gateway-local"), "package", pattern="MockProxyGateway")
+ET.SubElement(ET.SubElement(mapping, "packageSource", key="nuget.org"), "package", pattern="*")
+ET.ElementTree(config).write(sys.argv[1], encoding="utf-8", xml_declaration=True)
+PY
 dotnet restore "$work/consumer/EmbeddedHost.csproj" --packages "$work/packages" \
-  --source "$root/artifacts/packages" --source https://api.nuget.org/v3/index.json
+  --configfile "$work/NuGet.Config"
+# A successful restore is insufficient if it selected a different package.
+# Compare the exact archives before building the independent application.
+python3 - "$root/artifacts/packages" "$work/packages/mockproxygateway" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+packed = list(Path(sys.argv[1]).glob("*.nupkg"))
+restored = list(Path(sys.argv[2]).glob("*/*.nupkg"))
+assert len(packed) == len(restored) == 1, "Expected one built and one restored gateway archive"
+assert hashlib.sha256(packed[0].read_bytes()).digest() == hashlib.sha256(restored[0].read_bytes()).digest(), "Consumer did not restore the exact locally built package"
+print("Verified exact local gateway package SHA-256.")
+PY
 dotnet build "$work/consumer/EmbeddedHost.csproj" -c Release --no-restore
 mkdir "$work/upstream"
 printf 'local-upstream' > "$work/upstream/ping.txt"

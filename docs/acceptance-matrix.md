@@ -55,7 +55,7 @@ map, not a declaration that an unexecuted candidate passed.
 
 | Criterion | Primary source/test/gate |
 | --- | --- |
-| AC-01 | Solution/central props/lockfiles; CI restore/build/pack and inspect-package.py |
+| AC-01 | Solution/central props/lockfiles; CI restore/build/pack and inspect-package.py; local-feed source mapping and SHA-256 equality of packed/restored archive in package-smoke.sh |
 | AC-02 | scripts/package-smoke.sh: clean package-only host, omitted Prefix + parameterless registration, explicit custom middleware argument overriding configured prefix, segment boundary, unrelated routes, mock and proxy; separate temporary host executions with allowed and denied host-owned named policies |
 | AC-03 | src/MockProxyGateway.Host/Program.cs; ForwardingTests.StandaloneCompositionUsesCoreThroughWebApplicationFactory; Docker smoke |
 | AC-04 | Scenario coverage table above; pinned baseline and actual outbound counts |
