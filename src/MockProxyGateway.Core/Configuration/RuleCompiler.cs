@@ -227,10 +227,13 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             }
             var recursive = recursiveCount != 0;
             hasRepeatedTraversal = recursiveCount == 2;
+            // The pinned slice parser can consume a minus sign without digits and
+            // silently treat that component as omitted. Validate all bracketed
+            // selectors, not just selectors in paths that contain a filter.
+            var normalized = BoundedJsonPathFilter.Normalize(selectorText, out var predicateRepeatedTraversal,
+                out var predicateUnionProduct, out var hasNestedFilter, out var hasRepeatedPredicateDescent, out var usesPrivateValueQuery, out var hasRootDrivenNestedFilter, out var localFilters);
             if (hasFilter)
             {
-                var normalized = BoundedJsonPathFilter.Normalize(selectorText, out var predicateRepeatedTraversal,
-                    out var predicateUnionProduct, out var hasNestedFilter, out var hasRepeatedPredicateDescent, out var usesPrivateValueQuery, out var hasRootDrivenNestedFilter, out var localFilters);
                 hasRepeatedRegexVisits = hasRootDrivenNestedFilter || recursiveCount == 2 || (recursive && hasNestedFilter);
                 // Two outer descents can repeat filter candidates; two
                 // predicate descents can repeat traversal per candidate.

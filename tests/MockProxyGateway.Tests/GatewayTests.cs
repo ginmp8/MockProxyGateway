@@ -343,6 +343,12 @@ public sealed class GatewayTests
     [InlineData("""{"source":"body","key":"$.items[?@.name == '\\uD800']","operator":"exists"}""")]
     [InlineData("""{"source":"body","key":"$.items[?@.name != \"\\uDC00\"]","operator":"exists"}""")]
     [InlineData("""{"source":"body","key":"$.items[?@.name == '\\uD800\\u0061']","operator":"exists"}""")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[-:1]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[0:-]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[0:1:-]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[-:1,0]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[ : - : 1 ]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$..items[:: -]\",\"operator\":\"exists\"}")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """
@@ -904,6 +910,12 @@ public sealed class GatewayTests
     [InlineData("""$.items[?@.name == '\u0061\n'].value""", """{"items":[{"name":"a\n","value":42}]}""", 201)]
     [InlineData("""$.items[?@.name == '\uD83D\uDE00'].value""", """{"items":[{"name":"😀","value":42}]}""", 201)]
     [InlineData("""$.items[?@.name == '\uD83D\uDE00'].value""", """{"items":[{"name":"other","value":42}]}""", 404)]
+    [InlineData("$.items[:1]", "{\"items\":[42,0]}", 201)]
+    [InlineData("$.items[0:]", "{\"items\":[0,42]}", 201)]
+    [InlineData("$.items[0:2:]", "{\"items\":[0,42]}", 201)]
+    [InlineData("$.items[-2:-1]", "{\"items\":[42,0]}", 201)]
+    [InlineData("$.items[0:2:0]", "{\"items\":[42,42]}", 404)]
+    [InlineData("$.items['-:1']", "{\"items\":{\"-:1\":42}}", 201)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """

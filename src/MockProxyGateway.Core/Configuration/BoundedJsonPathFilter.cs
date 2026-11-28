@@ -157,7 +157,6 @@ internal static class BoundedJsonPathFilter
         hasRepeatedPredicateDescent = false;
         hasRootDrivenNestedFilter = false;
         const int filterDepth = 0;
-        var foundFilter = false;
         var index = 0;
         var grouping = new List<(int Offset, char Character)>();
         while (index < path.Length)
@@ -196,7 +195,6 @@ internal static class BoundedJsonPathFilter
                     else
                         ReadExpression(path, ref index, 0, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, ref hasRepeatedPredicateDescent, filterDepth);
                     filterIndex++;
-                    foundFilter = true;
                 }
                 else
                     _ = ReadSelector(path, ref index);
@@ -204,8 +202,6 @@ internal static class BoundedJsonPathFilter
             while (Take(path, ref index, ","));
             Require(path, ref index, "]");
         }
-        if (!foundFilter)
-            throw Invalid();
         if (grouping.Count == 0)
             return path;
         var normalized = new StringBuilder(path);
