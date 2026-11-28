@@ -1,0 +1,28 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MockProxyGateway.Core", "src\MockProxyGateway.Core\MockProxyGateway.Core.csproj", "{2DA98AA2-6471-4FC0-8A47-1F1451F6A24D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MockProxyGateway.Host", "src\MockProxyGateway.Host\MockProxyGateway.Host.csproj", "{27657E7E-F4DB-4B25-9E02-D86A182035A1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MockProxyGateway.Tests", "tests\MockProxyGateway.Tests\MockProxyGateway.Tests.csproj", "{0DCAD0D9-C549-4B50-9A61-4E5833A30237}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2DA98AA2-6471-4FC0-8A47-1F1451F6A24D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2DA98AA2-6471-4FC0-8A47-1F1451F6A24D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2DA98AA2-6471-4FC0-8A47-1F1451F6A24D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2DA98AA2-6471-4FC0-8A47-1F1451F6A24D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{27657E7E-F4DB-4B25-9E02-D86A182035A1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{27657E7E-F4DB-4B25-9E02-D86A182035A1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{27657E7E-F4DB-4B25-9E02-D86A182035A1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{27657E7E-F4DB-4B25-9E02-D86A182035A1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0DCAD0D9-C549-4B50-9A61-4E5833A30237}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0DCAD0D9-C549-4B50-9A61-4E5833A30237}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0DCAD0D9-C549-4B50-9A61-4E5833A30237}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0DCAD0D9-C549-4B50-9A61-4E5833A30237}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

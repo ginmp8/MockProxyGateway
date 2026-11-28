@@ -1,0 +1,91 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: SDK information
+        run: dotnet --info
+      - name: Restore locked dependencies
+        run: dotnet restore MockProxyGateway.sln --locked-mode
+      - name: Release build
+        run: dotnet build MockProxyGateway.sln -c Release --no-restore
+      - name: Test
+        run: dotnet test MockProxyGateway.sln -c Release --no-build --no-restore --logger trx --results-directory artifacts/test-results
+      - name: Require discovered tests
+        run: |
+          python3 - <<'PY'
+          import glob
+          import xml.etree.ElementTree as ET
+          counters = [node.attrib for file in glob.glob("artifacts/test-results/*.trx")
+                      for node in ET.parse(file).getroot().iter() if node.tag.endswith("Counters")]
+          assert counters and sum(int(c["total"]) for c in counters) > 0, "No tests discovered"
+          assert all(int(c["total"]) == int(c["executed"]) == int(c["passed"]) for c in counters), \
+              "All discovered tests must execute and pass; skipped or incomplete tests are not acceptance"
+          PY
+      - name: Reconcile named acceptance evidence
+        run: |
+          python3 scripts/test-verify-acceptance-tests.py
+          python3 scripts/verify-acceptance-tests.py
+      - name: Audit direct and transitive packages
+        run: |
+          dotnet package list --vulnerable --include-transitive
+          dotnet package list --vulnerable --include-transitive --no-restore --format json --output-version 1 > artifacts/package-audit.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("artifacts/package-audit.json").read_text())
+          assert report["version"] == 1, "Unexpected NuGet audit report version"
+          assert report["sources"] and not report.get("problems"), "NuGet audit incomplete"
+          projects = report["projects"]
+          expected = {"MockProxyGateway.Core.csproj", "MockProxyGateway.Host.csproj", "MockProxyGateway.Tests.csproj"}
+          assert len(projects) == len(expected) and {Path(p["path"]).name for p in projects} == expected, "Missing audited projects"
+          for project in projects:
+              for framework in project.get("frameworks", []):
+                  for group in ("topLevelPackages", "transitivePackages"):
+                      for package in framework.get(group, []):
+                          assert not package.get("vulnerabilities"), f"Vulnerable dependency: {package['id']}"
+          print("NuGet direct and transitive audit gate passed.")
+          PY
+      - name: Validate example schema
+        run: |
+          python3 -m venv /tmp/mock-proxy-schema-venv
+          /tmp/mock-proxy-schema-venv/bin/pip install jsonschema==4.25.1
+          /tmp/mock-proxy-schema-venv/bin/python - <<'PY'
+          import json
+          from jsonschema import Draft202012Validator
+          with open("docs/rules.schema.json") as f:
+              schema = json.load(f)
+          Draft202012Validator.check_schema(schema)
+          for path in ("examples/mock-proxy-gateway.json", "src/MockProxyGateway.Host/mock-proxy-gateway.json", "samples/embedded-host/mock-proxy-gateway.json"):
+              with open(path) as f:
+                  Draft202012Validator(schema).validate(json.load(f))
+              print("Validated", path)
+          PY
+      - name: Exercise pinned sample with local curl requests
+        run: bash scripts/example-scenarios.sh --verify
+      - name: Pack Core
+        run: dotnet pack src/MockProxyGateway.Core/MockProxyGateway.Core.csproj -c Release --no-build --no-restore -o artifacts/packages
+      - name: Inspect packed assembly and runtime dependency licenses
+        run: python3 scripts/inspect-package.py
+      - name: Package-only embedded consumer
+        run: bash scripts/package-smoke.sh
+      - name: Standalone Docker smoke
+        run: bash scripts/docker-smoke.sh
+      - name: Require committed lockfiles
+        run: |
+          git ls-files --error-unmatch src/MockProxyGateway.Core/packages.lock.json src/MockProxyGateway.Host/packages.lock.json tests/MockProxyGateway.Tests/packages.lock.json
+          test -z "$(git status --porcelain --untracked-files=all -- '**/packages.lock.json')"

@@ -2,9 +2,9 @@
 
 **Mock when needed. Proxy otherwise.**
 
-MockProxyGateway is a proposed, lightweight, configuration-driven service virtualization gateway for .NET 10 and ASP.NET Core. Its goal is to let developers exercise real application flows even when external HTTP dependencies are unavailable, without replacing every integration with a mock or changing business logic.
+MockProxyGateway is a lightweight, configuration-driven service virtualization gateway for .NET 10 and ASP.NET Core. Its goal is to let developers exercise real application flows even when external HTTP dependencies are unavailable, without replacing every integration with a mock or changing business logic.
 
-> **Project status: design stage.** The initial implementation is tracked in [issue #1](https://github.com/ginmp8/MockProxyGateway/issues/1). The API, configuration contract, and commands below describe the intended first release. The runtime library, standalone host, tests, and NuGet package are not yet implemented or available. Examples are illustrative, not executed instructions for the current checkout.
+> **Project status: development preview.** Follow [issue #1](https://github.com/ginmp8/MockProxyGateway/issues/1) and [draft PR #2](https://github.com/ginmp8/MockProxyGateway/pull/2). Core, the optional host, integration tests, schema and CI are implemented. [CI run 46168856573](https://github.com/ginmp8/MockProxyGateway/actions/runs/46168856573) verified 1,258 tests, package inspection, local-feed consumption (including optional host policies), the pinned example and standalone Docker on commit `8d885e0`. The PR checkpoint records current-HEAD acceptance. No public package has been published; this is a non-production test/integration tool.
 
 ## Why MockProxyGateway?
 
@@ -28,7 +28,7 @@ flowchart TD
     G --> H[Registered upstream]
 ```
 
-The proposed solution has one reusable runtime assembly:
+The solution has one reusable runtime assembly:
 
 | Project | Responsibility |
 | --- | --- |
@@ -40,11 +40,18 @@ Core is independent of the executable host, not of ASP.NET Core. All reusable fu
 
 This middleware handles **incoming HTTP requests**. It does not automatically intercept outgoing HttpClient or Refit requests. Consumers can direct their integration base URLs to the gateway instead.
 
-## Planned quick start
+## Quick start (development checkout)
 
-Prerequisites for the intended release: .NET 10 SDK, an ASP.NET Core application, an approved non-production environment, and valid host-owned rules.
+Prerequisites: .NET 10 SDK, an ASP.NET Core application, an approved non-production environment, and valid host-owned rules.
 
-Once the package has been built and made available through a trusted NuGet feed, add a reference to `MockProxyGateway`.
+Reference Core from source or build the package locally and consume it from a trusted local feed. Nothing is published by the build. After the Release build and pack steps below, run these commands from the consuming project's directory (replace the local feed path with the absolute path to this checkout's artifacts/packages):
+
+```bash
+dotnet add package MockProxyGateway --version 0.1.0-preview.1 --no-restore
+dotnet restore --source /absolute/path/to/MockProxyGateway/artifacts/packages --source https://api.nuget.org/v3/index.json
+```
+
+The package is not available from a public feed. Use your organization's approved dependency source instead of nuget.org where required. The package contains only Core and declares its runtime dependencies.
 
 Register the library in the consuming application's `Program.cs`:
 
@@ -99,7 +106,7 @@ The host owns operational settings. The optional `MockProxyGateway` section can 
 }
 ```
 
-These are illustrative operational settings, not measured performance recommendations. The timeout's exact semantics and supported limits are part of the implementation contract in issue #1.
+These are illustrative operational settings, not measured performance recommendations. `ProxyTimeoutSeconds` is YARP's activity timeout, not an overall deadline. Additional startup settings are `AllowedJsonMediaTypes` (empty; exact additional `+json` media types for body inspection), `MaxConcurrentRequests` (64), `AuthorizationPolicy` (optional existing host policy), `FixtureRoot` (trusted directory), `AllowedDestinationAuthorities`, `AllowedDestinationAddresses` and `AllowLoopbackForTests` (false). Authority and IP lists are empty by default. A proxy destination must be explicitly approved; the sample `.test` domains cannot be forwarded without operator configuration.
 
 ### Rules: mock-proxy-gateway.json
 
@@ -217,7 +224,7 @@ All rows refer to the example above and the same endpoint, `POST /mock-proxy/com
 | No matching condition; customer.riskScore = 10 | Proxy to compliance-real /analysis |
 | success rule disabled; X-Test-Scenario: success; customer.riskScore = 10 | Proxy to compliance-real /analysis |
 
-Illustrative request, once an implementation is running on the selected local port:
+Illustrative request, once the gateway is running with the example rules and approved local upstream destinations:
 
 ```bash
 curl -i http://localhost:5080/mock-proxy/compliance/analysis \
@@ -232,7 +239,7 @@ See the [complete sample configuration](examples/mock-proxy-gateway.json) for ad
 
 ### Alternative configuration sources
 
-The intended contract supports selecting one authoritative rule source per gateway instance:
+Select one authoritative rule source per gateway instance:
 
 | Source | Purpose |
 | --- | --- |
@@ -241,7 +248,7 @@ The intended contract supports selecting one authoritative rule source per gatew
 | Host-supplied IConfiguration | Integration with an existing configuration pipeline, preserving typed values |
 | Programmatic C# configuration | Typed rule documents or custom providers |
 
-Programmatic overrides take precedence over configured operational options, then library defaults fill omitted values. An explicit middleware prefix overrides the configured prefix. Rule sources are not implicitly merged; every source uses the same validation and snapshot mechanism.
+Use `RuleSource: File` for the dedicated file, `RuleSource: Inline` with `MockProxyGateway:Rules` in one complete JSON-file provider, or `RuleSource: Configuration` with `MockProxyGateway:RulesJson` containing the complete serialized rule document. Flattened multi-provider rules are rejected rather than coerced to strings. The `AddMockProxyGateway(IConfiguration)` overload accepts a scalar JSON document or a `RulesJson` entry; `AddMockProxyGateway(options => options.ProgrammaticRules = () => JsonElement.Parse(json))` supplies typed JSON directly (import `System.Text.Json`). Programmatic overrides take precedence over configured operational options, then library defaults fill omitted values. An explicit middleware prefix overrides the configured prefix. Rule sources are not implicitly merged; every source uses the same validation and snapshot mechanism.
 
 ## Request matching and precedence
 
@@ -257,7 +264,7 @@ An endpoint can contain multiple independently enabled rules, each with its own 
 | Cookie | test-session = session-b |
 | Content type | application/json |
 
-The planned matcher supports nested `all` (AND), `any` (OR), and `not` (NOT) groups, typed comparisons, existence and null checks, string operations, regular expressions, collection membership, numeric comparisons, and structural JSON equality. JSONPath supports nested properties and arrays. Multi-value conditions have explicit quantifiers.
+The matcher implements nested `all` (AND), `any` (OR), and `not` (NOT) groups, typed comparisons, existence and null checks, string operations, regular expressions, collection membership, numeric comparisons, and structural JSON equality. The bounded JSONPath subset supports property names, indices, wildcards, slices, unions (cumulative multiplicity at most four), up to two recursive descents and up to two outer filters, including filter unions. Filters support relative/root paths, singular comparisons, logical expressions, bounded `count()`/`value()` queries, and `length()` comparisons from singular queries or scalar literals to singular queries or scalar literals with Unicode scalar counting and Nothing semantics; a literal or singular query may also precede length in a comparison, and two bounded length calls can be compared. Length may also be compared with bounded count() or value() calls in either operand order, subject to the private value-query limits documented below. One nested filter is supported, including within outer unions or alongside a second outer filter, without predicate unions or descent inside predicates. One outer descent may be combined with a nested filter under cubic work and quadratic regex precharges; two outer descents with nested filters remain rejected. A root-driven enclosing query may be used for existence or count/value comparisons under cubic work and quadratic regex visit precharges; bounded length comparison operands (including root and candidate queries) are supported in either order. A single inner predicate, including ordinary comparisons or private functions, may refer to the original document root while the relative traversal starts at its outer candidate. Repeated traversal receives conservative pre-evaluation work charges. `match()` and `search()` support a bounded I-Regexp subset with singular queries or scalar-literal inputs, constant scalar pattern arguments (non-string arguments are false), Unicode-scalar dot, positive/negated scalar literal classes/ranges, and Unicode general-category escapes. Outer predicates may combine private functions and ordinary library predicates with bounded AND/OR/NOT and short-circuit evaluation. `length()`, `match()` and `search()` also accept `value()` over bounded relative/root queries, including non-nested unions within the combined multiplicity cap and a single recursive descent under the repeated-traversal precharge. Nested predicate arguments and repeated private descents remain excluded. Exactly one selected node supplies a value; zero or multiple nodes supply Nothing. For regex functions `value()` support is limited to the input, not the pattern. One bounded `count()` or `length()` call may also be used as a length or regex argument; its numeric-or-Nothing result is folded to Nothing or logical false without runtime coercion, while the inner query is still validated and charged. A single nested relative existence filter can also combine private functions, with the same precharged work and regex budgets. A single nested private relative filter also supports count/value on either side of a comparison with a literal, singular relative query, or bounded relative `count()`/`value()` operand, preserving typed comparisons (including unlike-type count literals), structural equality and distinguishing Nothing from JSON null. Singular document-root comparison operands and bounded root count/value operands (no predicate, union or descent) are supported in either operand order in bounded nested count/value comparisons; bare non-singular operands, unsupported pattern constructs, deeper nesting and combinations exceeding safety limits are rejected. See [configuration and limits](docs/configuration.md) for the exact supported grammar. This is not unrestricted RFC 9535 coverage. Numeric range comparisons use exact decimal values. Multi-value conditions have explicit quantifiers.
 
 Rule selection follows this hierarchy:
 
@@ -273,7 +280,7 @@ Fallback means choosing a less-specific configured rule **before executing an ac
 
 ## Dynamic rule updates
 
-The rule engine is designed to load and validate the selected configuration into an immutable in-memory snapshot. It should not read the JSON file for every request.
+The rule engine validates the selected configuration into an immutable in-memory snapshot and polls the selected rule source approximately once per second when reload is enabled. It does not read configuration files for each request. Fixture bytes are captured during compilation; update the rule document to trigger a fixture refresh.
 
 - Toggle a rule's `enabled` flag or edit its conditions, response, priority, or expiry.
 - Publish valid rule changes atomically without restarting the host.
@@ -288,22 +295,22 @@ In Kubernetes, the dedicated file can be mounted independently through a ConfigM
 
 MockProxyGateway is **authentication- and authorization-agnostic by design**. No JWT, OAuth, OpenID Connect, Identity, API key, authenticated principal, or named authorization policy is required by the library.
 
-Existing hosts can optionally integrate their own authorization policies. The gateway must not change the host's identity configuration or bypass protections that apply to its branch. Upstream credential forwarding is independently controlled per destination.
+Existing hosts can optionally integrate their own authorization policies. The gateway must not change the host's identity configuration or bypass protections that apply to its branch. All valid end-to-end request headers (including Authorization, Cookie, API keys and custom headers) are forwarded to the selected registered destination without header policy configuration.
 
 The absence of mandatory authentication is not permission to expose an unrestricted public proxy. Use an approved non-production environment and appropriate host or infrastructure access controls.
 
-The planned safety contract includes:
+The safety contract includes:
 
 - Explicit opt-in and non-production activation restrictions.
 - Registered, allowlisted destinations; no arbitrary target URLs supplied by clients.
 - SSRF protection, bounded request inspection, regex/evaluation limits, and cancellation support.
 - No automatic forwarding after a mock or evaluation failure.
-- Per-destination credential controls and redacted diagnostics.
+- Transparent end-to-end header forwarding and redacted diagnostics.
 - Synthetic test data only.
 
-## Technology and development
+## Local development and verification
 
-| Component | Planned technology |
+| Component | Technology |
 | --- | --- |
 | Runtime | .NET 10 / C# 14 / ASP.NET Core |
 | Reverse proxy | [YARP](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/servers/yarp/direct-forwarding?view=aspnetcore-10.0) |
@@ -313,9 +320,33 @@ The planned safety contract includes:
 | Tests | xUnit, ASP.NET Core integration tests, local test upstream |
 | Distribution | One NuGet package; optional standalone container host |
 
-No additional runtime rules engine, WireMock instance, database, Redis, or cloud service is required for the planned first release.
+No additional runtime rules engine, WireMock instance, database, Redis, or cloud service is required.
 
-The initial implementation, exact build and package conventions, dependency selection, runtime limits, security requirements, and verification gates are specified in [issue #1](https://github.com/ginmp8/MockProxyGateway/issues/1). The project is not yet ready to restore, build, test, or install from a published package.
+The initial implementation, exact build and package conventions, dependency selection, runtime limits, security requirements, and verification gates are specified in [issue #1](https://github.com/ginmp8/MockProxyGateway/issues/1). The workflow runs locked restore, Release build, discovered-test and named acceptance-evidence enforcement, transitive dependency inspection, JSON Schema validation, packing, package-only consumer smoke, and standalone Docker smoke. Follow the draft PR for actual execution outcomes. No public NuGet package is published.
+
+### Mock responses and trusted fixtures
+
+A mock action accepts a status code (200–599), safe response headers, and an optional delay (0–60,000 ms). Specify at most one of JSON `body`, string `text`, or relative `bodyFile`. The host must set `FixtureRoot` for file responses. Keep that directory operator-controlled and read-only to untrusted users; traversal and symlink/reparse-point paths are rejected. No mock failure triggers a proxy fallback.
+
+### Destination approval and optional authorization
+
+Production activation is always rejected. In Development or Testing only, the operator may explicitly allow literal loopback HTTP upstreams for tests. Otherwise use HTTPS, explicitly approve every authority (host and non-default port) and the resolved IPs, and restrict network egress independently. All valid end-to-end request headers are forwarded, including credentials, scenario headers, `Forwarded` and `X-Forwarded-*`. The gateway does not filter or synthesize application headers; YARP handles protocol-specific headers and the outbound `Host` uses the registered destination authority. The gateway-owned HTTP handler disables automatic distributed-context injection so incoming trace headers pass through unchanged and absent trace headers are not populated from ambient host activities. Gateway correlation logging remains available; no host-wide tracing settings are changed. Only register destinations trusted to receive the full header set; upstreams must not trust client-supplied forwarded metadata as authenticated identity. Use `removeQuery` for explicit removal of simulation query controls. No header policy settings are required or supported. The gateway isolates its YARP forwarder's internal logger because the pinned forwarder logs full target URLs. Gateway completion/failure diagnostics emit only structured rule, service, action, status, version, duration, correlation and category fields. Existing host YARP services and logging configuration are unchanged. Configure host HTTP/transport tracing and any other instrumentation to avoid exposing sensitive URLs or request data. Set `AuthorizationPolicy` only if an existing host policy should protect the gateway; absent or denied policies fail closed. No authentication registration is required for policy-free local use.
+
+### Verification commands
+
+From the repository root (requires the pinned .NET SDK; Docker for the last command):
+
+```bash
+dotnet restore MockProxyGateway.sln --locked-mode
+dotnet build MockProxyGateway.sln -c Release --no-restore
+dotnet test MockProxyGateway.sln -c Release --no-build --no-restore
+dotnet package list --vulnerable --include-transitive
+dotnet pack src/MockProxyGateway.Core/MockProxyGateway.Core.csproj -c Release --no-build --no-restore -o artifacts/packages
+bash scripts/package-smoke.sh
+bash scripts/docker-smoke.sh
+```
+
+Use the [rule JSON Schema](docs/rules.schema.json) for structural validation and the [configuration and local usage reference](docs/configuration.md) for every setting, operator, safety boundary and runnable example. Run `bash scripts/example-scenarios.sh --verify` after building to exercise the pinned example with curl and a synthetic local upstream. The [acceptance trace](docs/acceptance-matrix.md) maps every normative scenario and AC to executable evidence. The runtime adds semantic checks beyond JSON Schema.
 
 ## Scope and roadmap
 
@@ -323,4 +354,4 @@ The first release focuses on incoming HTTP middleware, declarative matching, moc
 
 ## License
 
-MockProxyGateway is licensed under the [MIT License](LICENSE).
+MockProxyGateway is licensed under the [MIT License](LICENSE). See [third-party notices](THIRD-PARTY-NOTICES.md) for the exact runtime dependency license metadata.
