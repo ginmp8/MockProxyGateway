@@ -231,21 +231,23 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             {
                 var normalized = BoundedJsonPathFilter.Normalize(selectorText, out var predicateRepeatedTraversal,
                     out var predicateUnionProduct, out var hasNestedFilter, out var hasRepeatedPredicateDescent, out var usesPrivateValueQuery, out var hasRootDrivenNestedFilter, out var localFilters);
-                hasRepeatedRegexVisits = hasRootDrivenNestedFilter || recursiveCount == 2;
+                hasRepeatedRegexVisits = hasRootDrivenNestedFilter || recursiveCount == 2 || (recursive && hasNestedFilter);
                 // Two outer descents can repeat filter candidates; two
                 // predicate descents can repeat traversal per candidate.
                 // Either requires a cubic whole-input bound. Combining both
                 // would require a fourth-order bound, so reject that shape.
                 if (recursiveCount == 2 && hasRepeatedPredicateDescent)
                     throw Invalid("Repeated outer and predicate JSONPath descents cannot be combined.");
-                hasCubicTraversal = recursiveCount == 2 || hasRepeatedPredicateDescent || hasRootDrivenNestedFilter;
+                hasCubicTraversal = recursiveCount == 2 || hasRepeatedPredicateDescent || hasRootDrivenNestedFilter ||
+                    (recursive && hasNestedFilter);
                 // Descent may make filter candidate subtrees overlap. Charge worst-case
                 // repeated traversal even for a relative predicate in that case.
-                // Nested predicates remain non-recursive and union-free. Relative
-                // enclosing queries use the quadratic bound; root-driven enclosing
-                // queries use cubic work and quadratic regex precharge.
-                if (hasNestedFilter && (predicateRepeatedTraversal || recursive || predicateUnionProduct != 1))
-                    throw Invalid("Nested JSONPath filters require bounded non-recursive predicates without predicate unions.");
+                // Nested predicates remain non-recursive and union-free. A single
+                // outer descent can revisit nested candidates through overlapping
+                // subtrees; reserve cubic work and quadratic regex visits for it.
+                // Two outer descents with nested filters remain outside this bound.
+                if (hasNestedFilter && (predicateRepeatedTraversal || recursiveCount > 1 || predicateUnionProduct != 1))
+                    throw Invalid("Nested JSONPath filters require bounded non-recursive predicates without predicate unions and at most one outer descent.");
                 // Retain the same quadratic charge for private value conversions.
                 hasRepeatedTraversal = predicateRepeatedTraversal || recursive || hasNestedFilter || usesPrivateValueQuery;
                 if (predicateUnionProduct > 4 / pathMultiplier)
@@ -256,8 +258,9 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 {
                     // One outer descent visits disjoint subtrees (apart from
                     // selector-union multiplicity). Two descents can revisit
-                    // overlapping subtrees, so the resolver precharges a second
-                    // body-node factor before invoking any regex.
+                    // overlapping subtrees; one descent with a nested filter can
+                    // also revisit candidates. The resolver precharges a second
+                    // body-node factor for these shapes before invoking any regex.
                     regexCandidateMultiplier = regexFilters * pathMultiplier;
                 }
                 if (!JsonPath.TryParse(normalized, out jsonPath))

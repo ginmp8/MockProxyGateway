@@ -161,8 +161,9 @@ internal sealed class RuleResolver(HttpContext context, GatewayOptions options, 
                     }
                 }
                 // Two outer descents can revisit a candidate through multiple
-                // ancestors. Root-driven nested filters can likewise revisit an
-                // inner candidate per outer candidate. Reserve the quadratic
+                // ancestors. Root-driven nested filters and a single outer descent
+                // with a nested filter can likewise revisit an inner candidate per
+                // outer candidate. Reserve the quadratic
                 // upper bound (including union multiplicity) before evaluation.
                 var regexCandidates = (long)_bodyNodes * condition.JsonPathRegexCandidateMultiplier *
                     (condition.HasJsonPathRepeatedRegexVisits ? _bodyNodes : 1);

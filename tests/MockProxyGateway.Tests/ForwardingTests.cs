@@ -2192,6 +2192,72 @@ public sealed class ForwardingTests
             Assert.Equal(payload, Assert.Single(upstream.Requests).Body);
     }
 
+    [Theory]
+    [InlineData("$..items[?@.nested[?@ == true]]", "{\"items\":[{\"nested\":[true]}]}", 202, 0)]
+    [InlineData("$..items[?@.nested[?@ == true]]", "{\"items\":[{\"nested\":[false]}]}", 201, 1)]
+    [InlineData("$..items[?@.nested[?match(@, 'x')]]", "{\"items\":[{\"nested\":[\"x\"]}]}", 202, 0)]
+    [InlineData("$..items[?@.nested[?search(@, 'x')]]", "{\"items\":[{\"nested\":[\"y\"]}]}", 201, 1)]
+    [InlineData("$..items[?count(@.nested[?match(@, 'x')]) == 1]", "{\"items\":[{\"nested\":[\"x\"]}]}", 202, 0)]
+    [InlineData("$..[?@.nested[?match(@, 'x')]]", "{\"items\":[{\"nested\":[\"x\"]}]}", 202, 0)]
+    [InlineData("$.items[?@.nested[?match(@, 'x')]]..nested", "{\"items\":[{\"nested\":[\"x\"]}]}", 202, 0)]
+    [InlineData("$..items[?$.nested[?match(@, 'x')]]", "{\"items\":[0],\"nested\":[\"x\"]}", 202, 0)]
+    [InlineData("$..items[?$.nested[?match(@, 'x')]]", "{\"items\":[{\"nested\":[\"x\"]}],\"nested\":[\"y\"]}", 201, 1)]
+    public async Task SingleDescentNestedFilterUsesBoundedScopeAndPreservesProxyBody(
+        string selector, string payload, int status, int calls)
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"nested-descent","priority":1,"conditions":{"source":"body","key":"$.items","operator":"exists"},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        rules["services"]!["a"]!["rules"]![0]!["conditions"]!["key"] = selector;
+        await using var gateway = await StartGatewayAsync(rules, upstream);
+        using var client = gateway.GetTestClient();
+        using var body = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync("/mock-proxy/a/check", body, TestContext.Current.CancellationToken);
+        Assert.Equal((HttpStatusCode)status, response.StatusCode);
+        Assert.Equal(calls, upstream.Requests.Count);
+        if (calls == 1)
+            Assert.Equal(payload, Assert.Single(upstream.Requests).Body);
+    }
+
+    [Fact]
+    public async Task SingleDescentNestedFilterReservesRegexVisitsBeforeAnyOutboundCall()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var upstream = await Upstream.StartAsync();
+        using var capture = new CaptureProvider();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"nested-descent","priority":1,"conditions":{"source":"body","key":"$..items[?@.nested[?match(@, 'x') || search(@, 'q')]]","operator":"exists"},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        await using var gateway = await StartGatewayAsync(rules, upstream, capture: capture);
+        using var client = gateway.GetTestClient();
+        // Six JSON nodes, two regex leaves: the quadratic reservation of 72
+        // exceeds 64 even though the cubic work charge fits.
+        const string payload = """{"items":[{"nested":["x"],"extra":0}]}""";
+        using var body = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync("/mock-proxy/a/check", body, ct);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty(upstream.Requests);
+        await WaitForGatewayLogAsync(capture, "status=400", "category=regex-budget", ct);
+
+        var large = "{\"items\":[{\"nested\":[" + string.Join(',', Enumerable.Repeat("\"x\"", 80)) + "]}]}";
+        using var costlyBody = new StringContent(large, Encoding.UTF8, "application/json");
+        using var costly = await client.PostAsync("/mock-proxy/a/check", costlyBody, ct);
+        Assert.Equal(HttpStatusCode.BadRequest, costly.StatusCode);
+        Assert.Empty(upstream.Requests);
+        await WaitForGatewayLogAsync(capture, "status=400", "category=evaluation-budget", ct);
+    }
+
     [Fact]
     public async Task NestedRelativeFilterSelectsMockOrRealWithoutExtraOutboundCalls()
     {
