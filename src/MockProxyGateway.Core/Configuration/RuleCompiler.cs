@@ -231,9 +231,10 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             // silently treat that component as omitted. Validate all bracketed
             // selectors, not just selectors in paths that contain a filter.
             var normalized = BoundedJsonPathFilter.Normalize(selectorText, out var predicateRepeatedTraversal,
-                out var predicateUnionProduct, out var hasNestedFilter, out var hasRepeatedPredicateDescent, out var usesPrivateValueQuery, out var hasRootDrivenNestedFilter, out var localFilters);
+                out var predicateUnionProduct, out var hasNestedFilter, out var hasRepeatedPredicateDescent, out var privateValueUnionProduct, out var hasRootDrivenNestedFilter, out var localFilters);
             if (hasFilter)
             {
+                predicateUnionProduct = Math.Max(predicateUnionProduct, privateValueUnionProduct);
                 hasRepeatedRegexVisits = hasRootDrivenNestedFilter || recursiveCount == 2 || (recursive && hasNestedFilter);
                 // Two outer descents can repeat filter candidates; two
                 // predicate descents can repeat traversal per candidate.
@@ -252,7 +253,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
                 if (hasNestedFilter && (predicateRepeatedTraversal || recursiveCount > 1 || predicateUnionProduct != 1))
                     throw Invalid("Nested JSONPath filters require bounded non-recursive predicates without predicate unions and at most one outer descent.");
                 // Retain the same quadratic charge for private value conversions.
-                hasRepeatedTraversal = predicateRepeatedTraversal || recursive || hasNestedFilter || usesPrivateValueQuery;
+                hasRepeatedTraversal = predicateRepeatedTraversal || recursive || hasNestedFilter || privateValueUnionProduct > 0;
                 if (predicateUnionProduct > 4 / pathMultiplier)
                     throw Invalid("JSONPath predicate union complexity limit exceeded.");
                 pathMultiplier *= predicateUnionProduct;

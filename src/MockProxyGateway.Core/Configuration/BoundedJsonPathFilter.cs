@@ -146,12 +146,12 @@ internal static class BoundedJsonPathFilter
     private static bool IsNameFirst(char c) => char.IsAsciiLetter(c) || c == '_' || c >= '\u0080';
     private static bool IsBlankSpace(char c) => c is ' ' or '\t' or '\r' or '\n';
 
-    internal static string Normalize(string path, out bool usesRepeatedTraversal, out int maxUnionProduct, out bool hasNestedFilter, out bool hasRepeatedPredicateDescent, out bool usesPrivateValueQuery, out bool hasRootDrivenNestedFilter, out Dictionary<int, ISelector> localFilters)
+    internal static string Normalize(string path, out bool usesRepeatedTraversal, out int maxUnionProduct, out bool hasNestedFilter, out bool hasRepeatedPredicateDescent, out int privateValueUnionProduct, out bool hasRootDrivenNestedFilter, out Dictionary<int, ISelector> localFilters)
     {
         localFilters = [];
         var filterIndex = 0;
         usesRepeatedTraversal = false;
-        usesPrivateValueQuery = false;
+        privateValueUnionProduct = 0;
         maxUnionProduct = 1;
         hasNestedFilter = false;
         hasRepeatedPredicateDescent = false;
@@ -180,11 +180,11 @@ internal static class BoundedJsonPathFilter
                     {
                         var start = index;
                         var parser = new LocalExpressionParser(path, index, usesRepeatedTraversal, maxUnionProduct,
-                            hasNestedFilter, hasRepeatedPredicateDescent, usesPrivateValueQuery);
+                            hasNestedFilter, hasRepeatedPredicateDescent, privateValueUnionProduct);
                         var predicate = parser.ReadOr(0);
                         index = parser.Position;
                         usesRepeatedTraversal = parser.UsesRepeatedTraversal;
-                        usesPrivateValueQuery = parser.UsesPrivateValueQuery;
+                        privateValueUnionProduct = parser.PrivateValueUnionProduct;
                         maxUnionProduct = parser.MaxUnionProduct;
                         hasNestedFilter = parser.HasNestedFilter;
                         hasRootDrivenNestedFilter |= parser.HasRootDrivenNestedFilter;
@@ -270,18 +270,18 @@ internal static class BoundedJsonPathFilter
     // actual root and current candidate. Private predicates never mutate the
     // host function registry or duplicate candidate nodes.
     private sealed class LocalExpressionParser(string path, int start, bool repeatedTraversal,
-        int unionProduct, bool nestedFilter, bool repeatedDescent, bool privateValueQuery)
+        int unionProduct, bool nestedFilter, bool repeatedDescent, int privateValueQuery)
     {
         private int _index = start;
         private bool _usesRepeatedTraversal = repeatedTraversal;
-        private bool _usesPrivateValueQuery = privateValueQuery;
+        private int _privateValueUnionProduct = privateValueQuery;
         private int _maxUnionProduct = unionProduct;
         private bool _hasNestedFilter = nestedFilter;
         private bool _hasRepeatedPredicateDescent = repeatedDescent;
         private int _termCount;
         internal int Position => _index;
         internal bool UsesRepeatedTraversal => _usesRepeatedTraversal;
-        internal bool UsesPrivateValueQuery => _usesPrivateValueQuery;
+        internal int PrivateValueUnionProduct => _privateValueUnionProduct;
         internal int MaxUnionProduct => _maxUnionProduct;
         internal bool HasNestedFilter => _hasNestedFilter;
         internal bool HasRootDrivenNestedFilter { get; private set; }
@@ -339,7 +339,7 @@ internal static class BoundedJsonPathFilter
             ISelector? local;
             var lengthCursor = _index;
             var lengthTraversal = _usesRepeatedTraversal;
-            var lengthValueQuery = _usesPrivateValueQuery;
+            var lengthValueQuery = _privateValueUnionProduct;
             try
             {
                 if (TryReadLengthFilter(path, ref lengthCursor, out local, ref lengthTraversal, ref lengthValueQuery))
@@ -348,7 +348,7 @@ internal static class BoundedJsonPathFilter
                         throw Invalid();
                     _index = lengthCursor;
                     _usesRepeatedTraversal = lengthTraversal;
-                    _usesPrivateValueQuery = lengthValueQuery;
+                    _privateValueUnionProduct = lengthValueQuery;
                     return ((BoundedLengthFilterSelector)local!).MatchesCandidate;
                 }
             }
@@ -357,7 +357,7 @@ internal static class BoundedJsonPathFilter
                 // Reparse with the bounded local operand reader; an ordinary
                 // malformed length expression is still rejected below.
             }
-            if (TryReadRegexFilter(path, ref _index, out local, ref _usesRepeatedTraversal, ref _usesPrivateValueQuery))
+            if (TryReadRegexFilter(path, ref _index, out local, ref _usesRepeatedTraversal, ref _privateValueUnionProduct))
             {
                 RegexCount++;
                 return ((BoundedRegexFilterSelector)local!).MatchesCandidate;
@@ -373,7 +373,7 @@ internal static class BoundedJsonPathFilter
                     throw Invalid();
                 var nestedStart = cursor;
                 var nested = new LocalExpressionParser(path, cursor, _usesRepeatedTraversal,
-                    _maxUnionProduct, _hasNestedFilter, _hasRepeatedPredicateDescent, _usesPrivateValueQuery);
+                    _maxUnionProduct, _hasNestedFilter, _hasRepeatedPredicateDescent, _privateValueUnionProduct);
                 var nestedPredicate = nested.ReadOr(0);
                 cursor = nested.Position;
                 // Root references inside this relative, non-overlapping nested
@@ -382,7 +382,7 @@ internal static class BoundedJsonPathFilter
                 // classified; a root-driven query can revisit every candidate.
                 if (ContainsUnquotedDescent(path, nestedStart, cursor))
                     throw Invalid();
-                _usesPrivateValueQuery = nested.UsesPrivateValueQuery;
+                _privateValueUnionProduct = nested.PrivateValueUnionProduct;
                 _maxUnionProduct = nested.MaxUnionProduct;
                 _hasNestedFilter = nested.HasNestedFilter;
                 _hasRepeatedPredicateDescent = nested.HasRepeatedPredicateDescent;
@@ -397,7 +397,7 @@ internal static class BoundedJsonPathFilter
                 lengthOperand = null;
                 if (Take(path, ref cursor, "length"))
                 {
-                    lengthOperand = ReadLengthArgument(path, ref cursor, ref _usesRepeatedTraversal, ref _usesPrivateValueQuery);
+                    lengthOperand = ReadLengthArgument(path, ref cursor, ref _usesRepeatedTraversal, ref _privateValueUnionProduct);
                     return (false, true);
                 }
                 return ReadOperand(path, ref cursor, grouping, ref _usesRepeatedTraversal,
@@ -424,7 +424,7 @@ internal static class BoundedJsonPathFilter
                 if (negatedTest)
                     throw Invalid();
                 if (leftLength is null && nestedPrivate is null && TryReadReversedLengthFilter(path, ref _index,
-                        path[leafStart..leftEnd].Trim(), comparison, out local, ref _usesRepeatedTraversal, ref _usesPrivateValueQuery))
+                        path[leafStart..leftEnd].Trim(), comparison, out local, ref _usesRepeatedTraversal, ref _privateValueUnionProduct))
                     return ((BoundedLengthFilterSelector)local!).MatchesCandidate;
                 var right = ReadLocalOperand(ref _index, out rightLength);
                 if (!left.Comparable || !right.Comparable)
@@ -770,8 +770,9 @@ internal static class BoundedJsonPathFilter
     }
 
     // Explicit conversion from a nodelist to ValueType. Admit bounded
-    // non-overlapping queries and precharge repeated whole-input work.
-    private static JsonPath ReadValueQuery(string path, ref int index, ref bool usesRepeatedTraversal, ref bool usesPrivateValueQuery)
+    // unions with their multiplicity, but no recursive or filtered queries.
+    // Precharge repeated whole-input work before any action.
+    private static JsonPath ReadValueQuery(string path, ref int index, ref bool usesRepeatedTraversal, ref int privateValueUnionProduct)
     {
         Require(path, ref index, "(");
         SkipWhitespace(path, ref index);
@@ -785,7 +786,7 @@ internal static class BoundedJsonPathFilter
         var repeatedDescent = false;
         _ = ReadSegments(path, ref index, [], ref repeated, ref unionProduct,
             ref nested, ref repeatedDescent, 0);
-        if (repeated || nested || unionProduct != 1 ||
+        if (repeated || nested ||
             !JsonPath.TryParse(path[start..index].Trim(), out var query,
                 new PathParsingOptions { AllowRelativePathStart = true }) ||
             query.Segments.Length > 16)
@@ -793,12 +794,13 @@ internal static class BoundedJsonPathFilter
         Require(path, ref index, ")");
         // A relative conversion needs the conservative work charge, but
         // does not escape the nested candidate's scope like a root query.
+        // Preserve the largest private operand union product across all leaves.
         usesRepeatedTraversal |= root;
-        usesPrivateValueQuery = true;
+        privateValueUnionProduct = Math.Max(privateValueUnionProduct, unionProduct);
         return query;
     }
 
-    private static bool TryReadLengthFilter(string path, ref int index, out ISelector? selector, ref bool usesRepeatedTraversal, ref bool usesPrivateValueQuery)
+    private static bool TryReadLengthFilter(string path, ref int index, out ISelector? selector, ref bool usesRepeatedTraversal, ref int privateValueUnionProduct)
     {
         selector = null;
         var cursor = index;
@@ -806,7 +808,7 @@ internal static class BoundedJsonPathFilter
         var expressionStart = cursor;
         if (!Take(path, ref cursor, "length"))
             return false;
-        var (argument, literalLength) = ReadLengthArgument(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery);
+        var (argument, literalLength) = ReadLengthArgument(path, ref cursor, ref usesRepeatedTraversal, ref privateValueUnionProduct);
         string? comparison = null;
         foreach (var op in new[] { "==", "!=", "<=", ">=", "<", ">" })
         {
@@ -826,9 +828,9 @@ internal static class BoundedJsonPathFilter
         (JsonPath? Query, int? Literal)? expectedLength = null;
         var expectedCount = false;
         if (Take(path, ref cursor, "length"))
-            expectedLength = ReadLengthArgument(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery);
+            expectedLength = ReadLengthArgument(path, ref cursor, ref usesRepeatedTraversal, ref privateValueUnionProduct);
         else if ((expectedCount = Take(path, ref cursor, "count")) || Take(path, ref cursor, "value"))
-            expectedQuery = ReadValueQuery(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery);
+            expectedQuery = ReadValueQuery(path, ref cursor, ref usesRepeatedTraversal, ref privateValueUnionProduct);
         else if (path[cursor] is '@' or '$')
             expectedQuery = ReadSingularQuery(path, ref cursor, ref usesRepeatedTraversal);
         else
@@ -839,7 +841,7 @@ internal static class BoundedJsonPathFilter
         return true;
     }
 
-    private static (JsonPath? Argument, int? LiteralLength) ReadLengthArgument(string path, ref int cursor, ref bool usesRepeatedTraversal, ref bool usesPrivateValueQuery, bool allowNumericFunction = true)
+    private static (JsonPath? Argument, int? LiteralLength) ReadLengthArgument(string path, ref int cursor, ref bool usesRepeatedTraversal, ref int privateValueUnionProduct, bool allowNumericFunction = true)
     {
         Require(path, ref cursor, "(");
         SkipWhitespace(path, ref cursor);
@@ -847,13 +849,13 @@ internal static class BoundedJsonPathFilter
             throw Invalid();
         JsonPath? argument = null;
         int? literalLength = null;
-        if (allowNumericFunction && TryReadNonStringFunction(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery))
+        if (allowNumericFunction && TryReadNonStringFunction(path, ref cursor, ref usesRepeatedTraversal, ref privateValueUnionProduct))
         {
             Require(path, ref cursor, ")");
             return (null, null);
         }
         if (Take(path, ref cursor, "value"))
-            argument = ReadValueQuery(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery);
+            argument = ReadValueQuery(path, ref cursor, ref usesRepeatedTraversal, ref privateValueUnionProduct);
         else if (path[cursor] is '@' or '$')
             argument = ReadSingularQuery(path, ref cursor, ref usesRepeatedTraversal);
         else
@@ -870,21 +872,21 @@ internal static class BoundedJsonPathFilter
     // can supply a string, array or object to a length/regex operand. Validate
     // the complete bounded inner argument and keep its original work flags,
     // then fold the result without an unnecessary request-time traversal.
-    private static bool TryReadNonStringFunction(string path, ref int cursor, ref bool usesRepeatedTraversal, ref bool usesPrivateValueQuery)
+    private static bool TryReadNonStringFunction(string path, ref int cursor, ref bool usesRepeatedTraversal, ref int privateValueUnionProduct)
     {
         if (Take(path, ref cursor, "count"))
         {
-            _ = ReadValueQuery(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery);
+            _ = ReadValueQuery(path, ref cursor, ref usesRepeatedTraversal, ref privateValueUnionProduct);
             return true;
         }
         if (!Take(path, ref cursor, "length"))
             return false;
-        _ = ReadLengthArgument(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery, allowNumericFunction: false);
+        _ = ReadLengthArgument(path, ref cursor, ref usesRepeatedTraversal, ref privateValueUnionProduct, allowNumericFunction: false);
         return true;
     }
 
     private static bool TryReadReversedLengthFilter(string path, ref int index, string operand,
-        string comparison, out ISelector? selector, ref bool usesRepeatedTraversal, ref bool usesPrivateValueQuery)
+        string comparison, out ISelector? selector, ref bool usesRepeatedTraversal, ref int privateValueUnionProduct)
     {
         selector = null;
         var cursor = index;
@@ -896,7 +898,7 @@ internal static class BoundedJsonPathFilter
         JsonElement expectedLiteral = default;
         var expectedCount = Take(operand, ref operandCursor, "count");
         if (expectedCount || Take(operand, ref operandCursor, "value"))
-            expectedQuery = ReadValueQuery(operand, ref operandCursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery);
+            expectedQuery = ReadValueQuery(operand, ref operandCursor, ref usesRepeatedTraversal, ref privateValueUnionProduct);
         else if (operand.StartsWith('@') || operand.StartsWith('$'))
             expectedQuery = ReadSingularQuery(operand, ref operandCursor, ref usesRepeatedTraversal);
         else
@@ -905,7 +907,7 @@ internal static class BoundedJsonPathFilter
         if (operandCursor != operand.Length)
             throw Invalid();
 
-        var (argument, literalLength) = ReadLengthArgument(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery);
+        var (argument, literalLength) = ReadLengthArgument(path, ref cursor, ref usesRepeatedTraversal, ref privateValueUnionProduct);
         // The existing selector compares length against its operand. Reverse only
         // the ordered operators; equality and Nothing semantics are symmetric.
         var reversed = comparison switch
@@ -922,7 +924,7 @@ internal static class BoundedJsonPathFilter
         return true;
     }
 
-    private static bool TryReadRegexFilter(string path, ref int index, out ISelector? selector, ref bool usesRepeatedTraversal, ref bool usesPrivateValueQuery)
+    private static bool TryReadRegexFilter(string path, ref int index, out ISelector? selector, ref bool usesRepeatedTraversal, ref int privateValueUnionProduct)
     {
         selector = null;
         var cursor = index;
@@ -938,10 +940,10 @@ internal static class BoundedJsonPathFilter
         JsonPath? argument = null;
         string? literalArgument = null;
         if (Take(path, ref cursor, "value"))
-            argument = ReadValueQuery(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery);
+            argument = ReadValueQuery(path, ref cursor, ref usesRepeatedTraversal, ref privateValueUnionProduct);
         else if (path[cursor] is '@' or '$')
             argument = ReadSingularQuery(path, ref cursor, ref usesRepeatedTraversal);
-        else if (!TryReadNonStringFunction(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery))
+        else if (!TryReadNonStringFunction(path, ref cursor, ref usesRepeatedTraversal, ref privateValueUnionProduct))
         {
             var literal = ReadScalarLiteral(path, ref cursor);
             if (literal.ValueKind == JsonValueKind.String)
@@ -950,7 +952,7 @@ internal static class BoundedJsonPathFilter
         Require(path, ref cursor, ",");
         // Dynamic string patterns remain rejected: compilation work is configuration-owned.
         // A statically non-string function result is always logical false.
-        var patternLiteral = TryReadNonStringFunction(path, ref cursor, ref usesRepeatedTraversal, ref usesPrivateValueQuery)
+        var patternLiteral = TryReadNonStringFunction(path, ref cursor, ref usesRepeatedTraversal, ref privateValueUnionProduct)
             ? default : ReadScalarLiteral(path, ref cursor);
         Require(path, ref cursor, ")");
         var pattern = patternLiteral.ValueKind == JsonValueKind.String

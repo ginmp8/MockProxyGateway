@@ -314,7 +314,9 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?count(@.nested[?match(@.name, 'x')]) == length(value($..names))]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?length(value($.names[?@])) == count(@.nested[?match(@.name, 'x')])]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?length(count(1)) == 0]\",\"operator\":\"exists\"}")]
-    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?length(count(@.names[0,1])) == 0]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?length(count(@.names[0,1,2,3,4])) == 0]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?length(value(@['a','b','c'])) == 2,0]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(value(@['a','b','c','d','e']), 'x')]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?length(length(length(@.name))) == 0]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?length(count($..names[*])) == 0]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?match(count(@.*), '[')]\",\"operator\":\"exists\"}")]
@@ -928,6 +930,15 @@ public sealed class GatewayTests
     [InlineData("$.items[?!(@.value < 43)].value", "{\"items\":[{\"value\":42}]}", 404)]
     [InlineData("$.items[?! (length(@.name) == 2)].value", "{\"items\":[{\"name\":\"x\",\"value\":42}]}", 201)]
     [InlineData("$.items[?! (length(@.name) == 2)].value", "{\"items\":[{\"name\":\"xy\",\"value\":42}]}", 404)]
+    [InlineData("$.items[?length(value(@.names[0,1])) == 2].value", "{\"items\":[{\"names\":[\"ab\"],\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(value(@.names[0,1])) == 2].value", "{\"items\":[{\"names\":[\"ab\",\"cd\"],\"value\":42}]}", 404)]
+    [InlineData("$.items[?length(value(@.names[0,0])) == @.missing].value", "{\"items\":[{\"names\":[\"ab\"],\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(@.name) == count(@.names[0,0])].value", "{\"items\":[{\"name\":\"ab\",\"names\":[\"x\"],\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(count(@.names[0,1])) == @.missing].value", "{\"items\":[{\"names\":[\"ab\"],\"value\":42}]}", 201)]
+    [InlineData("$.items[?length(value($.labels[0,1])) == 1].value", "{\"labels\":[\"😀\"],\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?match(value(@.names[0,1]), 'ab')].value", "{\"items\":[{\"names\":[\"ab\"],\"value\":42}]}", 201)]
+    [InlineData("$.items[?search(value(@.names[0,0]), 'b')].value", "{\"items\":[{\"names\":[\"ab\"],\"value\":42}]}", 404)]
+    [InlineData("$.items[?length(value(@['a','b'][0,1])) == 2].value", "{\"items\":[{\"a\":[\"ab\"],\"value\":42}]}", 201)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """
