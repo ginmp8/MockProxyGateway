@@ -10,6 +10,62 @@ namespace MockProxyGateway.Configuration;
 // It examines the original expression, not a potentially lossy AST rendering.
 internal static class BoundedJsonPathFilter
 {
+    // JsonPath.Net accepts all .NET whitespace as separators and trims
+    // complete queries. RFC 9535 allows only SP, HTAB, LF and CR as blank
+    // space; other Unicode whitespace can instead be part of a member name.
+    // Protect those names with equivalent bracket selectors before parsing.
+    internal static string NormalizeWhitespace(string path)
+    {
+        var normalized = new StringBuilder(path.Length);
+        var index = 0;
+        while (index < path.Length)
+        {
+            var start = index;
+            var current = path[index];
+            if (current is '\'' or '"')
+            {
+                ReadQuoted(path, ref index);
+                normalized.Append(path.AsSpan(start, index - start));
+                continue;
+            }
+
+            if (current == '.')
+            {
+                var descendant = path.AsSpan(index).StartsWith("..", StringComparison.Ordinal);
+                index += descendant ? 2 : 1;
+                var nameStart = index;
+                if (index < path.Length && IsNameFirst(path[index]))
+                {
+                    var requiresBrackets = false;
+                    while (index < path.Length && (IsNameFirst(path[index]) || char.IsAsciiDigit(path[index])))
+                    {
+                        requiresBrackets |= char.IsWhiteSpace(path[index]);
+                        index++;
+                    }
+
+                    if (requiresBrackets)
+                    {
+                        if (descendant)
+                            normalized.Append("..");
+                        normalized.Append("['").Append(path.AsSpan(nameStart, index - nameStart)).Append("']");
+                        continue;
+                    }
+                }
+                normalized.Append(path.AsSpan(start, index - start));
+                continue;
+            }
+
+            if (char.IsWhiteSpace(current) && !IsBlankSpace(current))
+                throw Invalid();
+            normalized.Append(current);
+            index++;
+        }
+        return normalized.ToString();
+    }
+
+    private static bool IsNameFirst(char c) => char.IsAsciiLetter(c) || c == '_' || c >= '\u0080';
+    private static bool IsBlankSpace(char c) => c is ' ' or '\t' or '\r' or '\n';
+
     internal static string Normalize(string path, out bool usesRepeatedTraversal, out int maxUnionProduct, out bool hasNestedFilter, out bool hasRepeatedPredicateDescent, out bool usesPrivateValueQuery, out bool hasRootDrivenNestedFilter, out Dictionary<int, ISelector> localFilters)
     {
         localFilters = [];
@@ -1079,7 +1135,7 @@ internal static class BoundedJsonPathFilter
 
     private static void SkipWhitespace(string path, ref int index)
     {
-        while (index < path.Length && char.IsWhiteSpace(path[index]))
+        while (index < path.Length && IsBlankSpace(path[index]))
             index++;
     }
 

@@ -192,7 +192,10 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
         if (source == "body")
         {
             // Parse RFC 9535 syntax with the pinned library, not a second approximate grammar.
-            if (key!.Length > 256 || !JsonPath.TryParse(key, out jsonPath))
+            if (key!.Length > 256)
+                throw Invalid("Invalid or overly complex JSONPath.");
+            var selectorText = BoundedJsonPathFilter.NormalizeWhitespace(key);
+            if (!JsonPath.TryParse(selectorText, out jsonPath))
                 throw Invalid("Invalid or overly complex JSONPath.");
             if (jsonPath.Segments.Length > 16)
                 throw Invalid("JSONPath segment limit exceeded.");
@@ -226,7 +229,7 @@ internal sealed class RuleCompiler(GatewayOptions options, string contentRoot)
             hasRepeatedTraversal = recursiveCount == 2;
             if (hasFilter)
             {
-                var normalized = BoundedJsonPathFilter.Normalize(key, out var predicateRepeatedTraversal,
+                var normalized = BoundedJsonPathFilter.Normalize(selectorText, out var predicateRepeatedTraversal,
                     out var predicateUnionProduct, out var hasNestedFilter, out var hasRepeatedPredicateDescent, out var usesPrivateValueQuery, out hasRootDrivenNestedFilter, out var localFilters);
                 // Two outer descents can repeat filter candidates; two
                 // predicate descents can repeat traversal per candidate.
