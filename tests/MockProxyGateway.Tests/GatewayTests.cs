@@ -239,7 +239,7 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?@..value]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?@.value] && @.other[?@.value]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?@['value','value']]]\",\"operator\":\"exists\"}")]
-    [InlineData("{\"source\":\"body\",\"key\":\"$..items[?@.nested[?@.value]]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$..items..[?@.nested[?@.value]]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?@.value] == 42]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$..items[?@.value]..value..tag\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$..items[?@..nested..tag]..value\",\"operator\":\"exists\"}")]

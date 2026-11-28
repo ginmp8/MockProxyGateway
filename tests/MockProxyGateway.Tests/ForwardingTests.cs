@@ -2193,6 +2193,8 @@ public sealed class ForwardingTests
     }
 
     [Theory]
+    [InlineData("$..items[?@.nested[?@.value]]", "{\"items\":[{\"nested\":[{\"value\":null}]}]}", 202, 0)]
+    [InlineData("$..items[?@.nested[?@.value]]", "{\"items\":[{\"nested\":[{}]}]}", 201, 1)]
     [InlineData("$..items[?@.nested[?@ == true]]", "{\"items\":[{\"nested\":[true]}]}", 202, 0)]
     [InlineData("$..items[?@.nested[?@ == true]]", "{\"items\":[{\"nested\":[false]}]}", 201, 1)]
     [InlineData("$..items[?@.nested[?match(@, 'x')]]", "{\"items\":[{\"nested\":[\"x\"]}]}", 202, 0)]
