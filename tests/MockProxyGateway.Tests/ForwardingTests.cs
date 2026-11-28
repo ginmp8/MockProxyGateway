@@ -2575,6 +2575,43 @@ public sealed class ForwardingTests
         Assert.Equal("synthetic-123", actual.Header);
     }
 
+    // A host can buffer and inspect a prefix before the gateway. Matching must
+    // inspect the same complete representation that the gateway would forward.
+    [Theory]
+    [InlineData("x{\"number\":41}", 400, 0)]
+    [InlineData("{\"number\":42}", 202, 0)]
+    [InlineData("{\"number\":41}", 201, 1)]
+    public async Task BufferedHostBodyInspectionUsesTheSameBytesAsForwarding(string payload, int status, int calls)
+    {
+        await using var upstream = await Upstream.StartAsync();
+        var rules = JsonNode.Parse("""
+            {"schemaVersion":1,"destinations":{"real":{"baseUrl":"http://127.0.0.1/"}},
+             "services":{"a":{"default":{"mode":"proxy","destination":"real"},"rules":[
+               {"id":"inspect","priority":1,"conditions":{"source":"body","key":"$.number","operator":"equals","value":42},
+                "action":{"mode":"mock","response":{"statusCode":202}}}
+             ]}}}
+            """)!;
+        rules["destinations"]!["real"]!["baseUrl"] = upstream.BaseUrl;
+        await using var gateway = await StartGatewayAsync(rules, upstream, beforeGateway: app =>
+        {
+            app.Use(async (context, next) =>
+            {
+                context.Request.EnableBuffering();
+                var prefix = new byte[1];
+                await context.Request.Body.ReadExactlyAsync(prefix, context.RequestAborted);
+                Assert.Equal(1L, context.Request.Body.Position);
+                await next(context);
+            });
+        });
+        using var client = gateway.GetTestClient();
+        using var request = CreateRequest("POST", "/mock-proxy/a/check", payload);
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal((HttpStatusCode)status, response.StatusCode);
+        Assert.Equal(calls, upstream.Requests.Count);
+        if (calls == 1)
+            Assert.Equal(Encoding.UTF8.GetBytes(payload), Assert.Single(upstream.Requests).BodyBytes);
+    }
+
     private static HttpRequestMessage CreateRequest(string method, string url, string? body, string? scenario = null)
     {
         var request = new HttpRequestMessage(new HttpMethod(method), url);
@@ -2587,7 +2624,7 @@ public sealed class ForwardingTests
 
     private static async Task<WebApplication> StartGatewayAsync(JsonNode json, Upstream upstream, bool realServer = false,
         Func<System.Text.Json.JsonElement>? provider = null, ILoggerProvider? capture = null, Action<GatewayOptions>? configure = null,
-        long? hostBodyLimit = null)
+        long? hostBodyLimit = null, Action<WebApplication>? beforeGateway = null)
     {
         var builder = TestHosting.CreateBuilder();
         if (capture is not null)
@@ -2614,6 +2651,7 @@ public sealed class ForwardingTests
         var app = builder.Build();
         try
         {
+            beforeGateway?.Invoke(app);
             app.UseMockProxyGateway();
             app.MapGet("/api/health", () => "normal");
             await app.StartAsync(TestContext.Current.CancellationToken);
