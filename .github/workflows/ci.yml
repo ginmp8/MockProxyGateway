@@ -36,6 +36,10 @@ jobs:
           assert all(int(c["total"]) == int(c["executed"]) == int(c["passed"]) for c in counters), \
               "All discovered tests must execute and pass; skipped or incomplete tests are not acceptance"
           PY
+      - name: Reconcile named acceptance evidence
+        run: |
+          python3 scripts/test-verify-acceptance-tests.py
+          python3 scripts/verify-acceptance-tests.py
       - name: Audit direct and transitive packages
         run: |
           dotnet package list --vulnerable --include-transitive
