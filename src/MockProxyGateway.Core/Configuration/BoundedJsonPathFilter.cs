@@ -312,13 +312,16 @@ internal static class BoundedJsonPathFilter
             return predicate;
         }
 
-        private Func<JsonNode?, JsonNode?, bool> ReadTerm(int depth)
+        private Func<JsonNode?, JsonNode?, bool> ReadTerm(int depth, bool negatedTest = false)
         {
             if (depth > 8)
                 throw Invalid();
             if (Take(path, ref _index, "!"))
             {
-                var operand = ReadTerm(depth + 1);
+                // RFC 9535 allows a single NOT before a test or parenthesized expression.
+                if (negatedTest)
+                    throw Invalid();
+                var operand = ReadTerm(depth + 1, negatedTest: true);
                 return (root, candidate) => !operand(root, candidate);
             }
             if (Take(path, ref _index, "("))
@@ -341,6 +344,8 @@ internal static class BoundedJsonPathFilter
             {
                 if (TryReadLengthFilter(path, ref lengthCursor, out local, ref lengthTraversal, ref lengthValueQuery))
                 {
+                    if (negatedTest)
+                        throw Invalid();
                     _index = lengthCursor;
                     _usesRepeatedTraversal = lengthTraversal;
                     _usesPrivateValueQuery = lengthValueQuery;
@@ -416,6 +421,8 @@ internal static class BoundedJsonPathFilter
             (JsonPath? Query, int? Literal)? rightLength = null;
             if (comparison is not null)
             {
+                if (negatedTest)
+                    throw Invalid();
                 if (leftLength is null && nestedPrivate is null && TryReadReversedLengthFilter(path, ref _index,
                         path[leafStart..leftEnd].Trim(), comparison, out local, ref _usesRepeatedTraversal, ref _usesPrivateValueQuery))
                     return ((BoundedLengthFilterSelector)local!).MatchesCandidate;
@@ -965,7 +972,7 @@ internal static class BoundedJsonPathFilter
             ReadTerm(path, ref index, depth, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, ref hasRepeatedPredicateDescent, filterDepth);
     }
 
-    private static void ReadTerm(string path, ref int index, int depth, List<(int Offset, char Character)> grouping, ref bool usesRepeatedTraversal, ref int maxUnionProduct, ref bool hasNestedFilter, ref bool hasRepeatedPredicateDescent, int filterDepth)
+    private static void ReadTerm(string path, ref int index, int depth, List<(int Offset, char Character)> grouping, ref bool usesRepeatedTraversal, ref int maxUnionProduct, ref bool hasNestedFilter, ref bool hasRepeatedPredicateDescent, int filterDepth, bool negatedTest = false)
     {
         if (depth > 8)
             throw Invalid();
@@ -973,7 +980,9 @@ internal static class BoundedJsonPathFilter
         var termStart = index;
         if (Take(path, ref index, "!"))
         {
-            ReadTerm(path, ref index, depth + 1, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, ref hasRepeatedPredicateDescent, filterDepth);
+            if (negatedTest)
+                throw Invalid();
+            ReadTerm(path, ref index, depth + 1, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, ref hasRepeatedPredicateDescent, filterDepth, negatedTest: true);
             // The pinned unary parser consumes a complete logical expression.
             // Explicitly group the negated term to preserve RFC NOT precedence.
             grouping.Add((termStart, '('));
@@ -992,6 +1001,8 @@ internal static class BoundedJsonPathFilter
             Take(path, ref index, "<=") || Take(path, ref index, ">=") ||
             Take(path, ref index, "<") || Take(path, ref index, ">"))
         {
+            if (negatedTest)
+                throw Invalid();
             var right = ReadOperand(path, ref index, grouping, ref usesRepeatedTraversal, ref maxUnionProduct, ref hasNestedFilter, ref hasRepeatedPredicateDescent, filterDepth);
             if (!left.Comparable || !right.Comparable)
                 throw Invalid();

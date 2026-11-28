@@ -349,6 +349,12 @@ public sealed class GatewayTests
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[-:1,0]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$.items[ : - : 1 ]\",\"operator\":\"exists\"}")]
     [InlineData("{\"source\":\"body\",\"key\":\"$..items[:: -]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?!@.value == 42]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?!@.value < 43]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?!length(@.name) == 2]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?!!@.flag]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?!!match(@.name, 'x')]\",\"operator\":\"exists\"}")]
+    [InlineData("{\"source\":\"body\",\"key\":\"$.items[?@.nested[?!@.value != 42]]\",\"operator\":\"exists\"}")]
     public async Task InvalidConditionFailsActivation(string condition)
     {
         var rules = """
@@ -916,6 +922,12 @@ public sealed class GatewayTests
     [InlineData("$.items[-2:-1]", "{\"items\":[42,0]}", 201)]
     [InlineData("$.items[0:2:0]", "{\"items\":[42,42]}", 404)]
     [InlineData("$.items['-:1']", "{\"items\":{\"-:1\":42}}", 201)]
+    [InlineData("$.items[?!(@.value == 7)].value", "{\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?!(@.value == 42)].value", "{\"items\":[{\"value\":42}]}", 404)]
+    [InlineData("$.items[?!(@.value < 7)].value", "{\"items\":[{\"value\":42}]}", 201)]
+    [InlineData("$.items[?!(@.value < 43)].value", "{\"items\":[{\"value\":42}]}", 404)]
+    [InlineData("$.items[?! (length(@.name) == 2)].value", "{\"items\":[{\"name\":\"x\",\"value\":42}]}", 201)]
+    [InlineData("$.items[?! (length(@.name) == 2)].value", "{\"items\":[{\"name\":\"xy\",\"value\":42}]}", 404)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """
