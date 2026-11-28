@@ -903,6 +903,8 @@ public sealed class GatewayTests
     [InlineData("""$['\u0000\t']""", """{"\u0000\t":42}""", 201)]
     [InlineData("""$.items[?@['\u0061\n'] == true].value""", """{"items":[{"a\n":true,"value":42}]}""", 201)]
     [InlineData("""$.items[?@.name == '\u0061\n'].value""", """{"items":[{"name":"a\n","value":42}]}""", 201)]
+    [InlineData("""$.items[?@.name == '\uD83D\uDE00'].value""", """{"items":[{"name":"😀","value":42}]}""", 201)]
+    [InlineData("""$.items[?@.name == '\uD83D\uDE00'].value""", """{"items":[{"name":"other","value":42}]}""", 404)]
     public async Task RfcSelectorsSupportBoundedPathsAndFilters(string selector, string payload, int expected)
     {
         var rules = """

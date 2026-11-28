@@ -75,10 +75,13 @@ internal static class BoundedJsonPathFilter
         var quote = token[0];
         target.Append(quote);
         var afterHex = false;
+        var pendingHighSurrogate = false;
         for (var i = 1; i < token.Length - 1;)
         {
             if (token[i] != '\\')
             {
+                if (pendingHighSurrogate)
+                    throw Invalid();
                 target.Append(token[i++]);
                 afterHex = false;
                 continue;
@@ -92,11 +95,23 @@ internal static class BoundedJsonPathFilter
                     !char.IsAsciiHexDigit(token[i]) || !char.IsAsciiHexDigit(token[i + 1]) ||
                     !char.IsAsciiHexDigit(token[i + 2]) || !char.IsAsciiHexDigit(token[i + 3]))
                     throw Invalid();
+                // RFC 9535 quoted strings permit only Unicode scalar values.
+                // JsonNode.Parse can defer string decoding until evaluation, so
+                // validate escaped surrogate pairs before publishing any rule.
+                var codeUnit = (char)ushort.Parse(token.Slice(i, 4),
+                    System.Globalization.NumberStyles.AllowHexSpecifier,
+                    System.Globalization.CultureInfo.InvariantCulture);
+                if (pendingHighSurrogate != char.IsLowSurrogate(codeUnit))
+                    throw Invalid();
+                pendingHighSurrogate = char.IsHighSurrogate(codeUnit);
                 i += 4;
                 target.Append(token[start..i]);
                 afterHex = true;
                 continue;
             }
+
+            if (pendingHighSurrogate)
+                throw Invalid();
 
             if (afterHex)
             {
@@ -123,6 +138,8 @@ internal static class BoundedJsonPathFilter
             target.Append(token[start..i]);
             afterHex = false;
         }
+        if (pendingHighSurrogate)
+            throw Invalid();
         target.Append(quote);
     }
 
