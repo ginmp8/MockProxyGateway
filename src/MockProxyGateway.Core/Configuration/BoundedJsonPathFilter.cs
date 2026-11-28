@@ -55,7 +55,11 @@ internal static class BoundedJsonPathFilter
                 continue;
             }
 
-            if (char.IsWhiteSpace(current) && !IsBlankSpace(current))
+            // The pinned integer parser uses char.IsDigit followed by subtraction
+            // of ASCII '0'. Non-ASCII decimal digits are not RFC index/slice digits.
+            // Quoted strings and shorthand member names were consumed above.
+            if ((char.IsWhiteSpace(current) && !IsBlankSpace(current)) ||
+                (char.IsDigit(current) && !char.IsAsciiDigit(current)))
                 throw Invalid();
             normalized.Append(current);
             index++;
