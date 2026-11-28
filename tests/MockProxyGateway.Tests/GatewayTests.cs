@@ -974,6 +974,9 @@ public sealed class GatewayTests
     [InlineData("Connection", "close")]
     [InlineData("X-Synthetic", "value\r\ninjected: yes")]
     [InlineData("Content-Type", "invalid media type")]
+    [InlineData("Content-Type", "*/*")]
+    [InlineData("Content-Type", "application/*")]
+    [InlineData("Proxy-Connection", "keep-alive")]
     public async Task InvalidMockHeadersCannotActivate(string name, string value)
     {
         var rules = """

@@ -1497,6 +1497,8 @@ public sealed class ForwardingTests
     [InlineData("cookie", "synthetic-malformed-cookie", "cookie-syntax")]
     [InlineData("cookie", "other=synthetic; malformed", "cookie-syntax")]
     [InlineData("contentType", "synthetic invalid media type", "content-type-syntax")]
+    [InlineData("contentType", "*/*", "content-type-syntax")]
+    [InlineData("contentType", "application/*", "content-type-syntax")]
     public async Task MalformedRequiredHeaderInspectionCannotReachDefaultProxy(
         string source, string malformed, string category)
     {
